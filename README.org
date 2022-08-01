@@ -1,0 +1,72 @@
+* ivy-fd
+
+** Requirements
+
++ Emacs >= 27.1
++ fd
++ ivy
++ hydra
+
+** Installation
+
+*** Manually
+
+Download repository and it to your load path in your init file:
+
+#+begin_src elisp :eval no
+
+(add-to-list 'load-path "/path/to/ivy-fd)
+
+(require 'ivy-fd)
+
+#+end_src
+
+*** With use-package and straight
+
+#+begin_src elisp :eval no
+
+(use-package ivy-fd
+	:straight (ivy-fd
+			       :repo "KarimAziev/ivy-fd"
+			       :type git
+			       :host github)
+	:bind ((:map ivy-fd-map
+			         ("C-l" . ivy-fd-find-directory-up)
+			         ("C-q" . ivy-fd-read-flags)
+			         ("C-." . ivy-fd-change-dir)
+			         ("C-<backspace>" . ivy-fd-find-directory-up)
+			         ("C-c C-o" . ivy-fd-find-file-other-window))
+		     (:map ivy-fd-async-keymap
+			         ("C->" . ivy-fd-async-edit-commmand)))
+	:commands (ivy-fd-async
+			       ivy-fd-preview-file))
+
+#+end_src
+
+
+** Hydras
+
+~M-x ivy-fd-hydra/body~
+
+Run hydra to configure fd options.
+
+** Commands
+
+*** ~ivy-fd-async~  (&optional initial-input)
+Call a "locate" style shell command. INITIAL-INPUT can be given as the initial minibuffer input.
+*** ~ivy-fd-change-dir~
+Read directory for fd in minibuffer.
+*** ~ivy-fd-find-directory-up~
+Change ~ivy-fd-current-dir~ to parent directory.
+*** ~ivy-fd-read-flags~
+Invoke hydra to configure fd flags.
+*** ~ivy-fd-find-file-other-window~
+Find FILE if ~ivy-exit~, otherwise preview FILE.
+*** ~ivy-fd-preview-file~  (file)
+Momentarily display content of the FILE in popup window. Display remains until next event is input.
+** Customization
+
+*** ~ivy-fd-async-command-delay~
+Number of seconds to wait before spawning another async command.
+*** ~ivy-fd-async-filter-update-time~
+The amount of microseconds to wait until updating ~ivy-fd--async-filter~.
