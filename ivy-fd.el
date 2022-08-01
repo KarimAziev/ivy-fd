@@ -506,12 +506,6 @@ caused by spawning too many subprocesses too quickly."
       (funcall #'ivy-fd-async-cmd input))
      '("" "working..."))))
 
-(defvar ivy-fd-async-keymap
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C->") 'ivy-fd-async-edit-commmand)
-    map)
-  "Keymap for .")
-
 ;;;###autoload
 (defun ivy-fd-preview-file (file)
   "Momentarily display content of the FILE in popup window.
