@@ -686,7 +686,8 @@ If value is empty string, return nil."
                                         (mapconcat
                                          (lambda (v) (concat
                                                  (substring
-                                                  (symbol-name key))
+                                                  (symbol-name key)
+                                                  1)
                                                  " " v))
                                          (split-string non-empty) "\s"))
                               acc))
