@@ -163,10 +163,10 @@ at the values with which this function was called."
           :value-type ,ivy-fd-settings-type))
 
 (defcustom ivy-fd-settings-type-switchers nil
-  "Settings to apply in directories."
+  "Dynamic settings."
   :group 'ivy-fd
   :type `(alist
-          :key-type (directory :tag "Directory")
+          :key-type (directory :tag "Name")
           :value-type (repeat ,ivy-fd-settings-type)))
 
 (defcustom ivy-fd-root-flags  '("-E 'run'"
