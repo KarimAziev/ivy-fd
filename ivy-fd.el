@@ -1174,14 +1174,44 @@ INITIAL-INPUT can be given as the initial minibuffer input."
     (ivy-fd-async dir)))
 
 ;;;###autoload
-(defun ivy-fd-async (&optional directory initial-input)
-  "Search in DIRECTORY or `default-directory' with INITIAL-INPUT."
+(defun ivy-fd-async (&optional directory initial-input args)
+  "Search in DIRECTORY or `default-directory' with INITIAL-INPUT and ARGS."
   (interactive)
   (setq ivy-fd-current-dir (ivy-fd-slash
                             (expand-file-name
                              (or directory default-directory))))
   (unless directory
-    (setq ivy-fd-hydra-state (ivy-fd-get-dir-settings ivy-fd-current-dir)))
+    (setq ivy-fd-hydra-state (or args
+                                 (ivy-fd-get-dir-settings ivy-fd-current-dir))))
+  (setq ivy-fd-async-command (ivy-fd-make-shell-command))
+  (unwind-protect
+      (let ((default-directory ivy-fd-current-dir))
+        (ivy-read (concat
+                   (abbreviate-file-name ivy-fd-current-dir)
+                   ": "
+                   (let ((flags (string-trim (ivy-fd-get-flags))))
+                     (if (string-empty-p flags)
+                         ""
+                       (concat flags " "))))
+                  #'ivy-fd-async-function
+                  :initial-input initial-input
+                  :dynamic-collection t
+                  :history 'ivy-fd-async-history
+                  :keymap ivy-fd-map
+                  :action 'ivy-fd-find-file-or-preview
+                  :caller 'ivy-fd-async))
+    (ivy-fd-delete-process)))
+
+;;;###autoload
+(defun ivy-fd-async-read-directory (&optional directory initial-input args)
+  "Search in DIRECTORY or `default-directory' with INITIAL-INPUT and ARGS."
+  (interactive)
+  (setq ivy-fd-current-dir (ivy-fd-slash
+                            (expand-file-name
+                             (or directory default-directory))))
+  (unless directory
+    (setq ivy-fd-hydra-state (or args
+                                 (ivy-fd-get-dir-settings ivy-fd-current-dir))))
   (setq ivy-fd-async-command (ivy-fd-make-shell-command))
   (unwind-protect
       (let ((default-directory ivy-fd-current-dir))
