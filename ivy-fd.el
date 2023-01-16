@@ -177,6 +177,10 @@ at the values with which this function was called."
   :type '(repeat string)
   :group 'ivy-fd)
 
+
+(defvar ivy-fd-args nil)
+(defvar ivy-fd-current-dir nil)
+(defvar ivy-fd-last-input nil)
 (defun ivy-fd-parent (path)
   "Return the parent directory to PATH without slash."
   (let ((parent (file-name-directory
@@ -592,8 +596,7 @@ Display remains until next event is input."
           (setq header-line-format
                 (abbreviate-file-name filename)))))))
 
-(defvar ivy-fd-current-dir nil)
-(defvar ivy-fd-last-input nil)
+
 
 (defvar ivy-fd-hydra-state '(:hidden nil :no-ignore nil))
 
@@ -613,41 +616,7 @@ Display remains until next event is input."
   (setq ivy-fd-hydra-state
         (plist-put ivy-fd-hydra-state keyword value)))
 
-(defun ivy-fd-maybe-to-number (value)
-  "Convert string of VALUE to number or return VALUE.
-If value is empty string, return nil."
-  (cond ((stringp value)
-         (setq value (string-trim value))
-         (if (string-empty-p value)
-             nil
-           (string-to-number value)))
-        (t value)))
-
-(defun ivy-fd-increase-depth ()
-  "Increase depth."
-  (let ((depth (or (ivy-fd-maybe-to-number
-                    (ivy-fd-hydra-get :max-depth))
-                   1)))
-    (when (numberp depth)
-      (ivy-fd-hydra-put :max-depth (1+ depth)))))
-
-(defun ivy-fd-decrease-depth ()
-  "Increase depth."
-  (when-let ((depth (ivy-fd-maybe-to-number
-                     (ivy-fd-hydra-get :max-depth))))
-    (when (and (numberp depth)
-               (> depth 1))
-      (ivy-fd-hydra-put :max-depth
-                        (1- depth)))))
-
-(defun ivy-fd-fdfind-read-max-depth ()
-  "Read and set max-depth option."
-  (let* ((value (ivy-fd-hydra-get :max-depth))
-         (new-value (read-string "--max-depth " (when (numberp value)
-                                                  (number-to-string value)))))
-    (ivy-fd-hydra-put :max-depth (ivy-fd-maybe-to-number new-value))))
-
-(defun ivy-fd-read-date ()
+(defun ivy-fd-read-date (&rest _)
   "Read fdfind date options."
   (let* ((actions '((?h "hours" "%dh")
                     (?m "minutes" "%dmin")
@@ -658,13 +627,14 @@ If value is empty string, return nil."
                     (?n "none")))
          (answer (read-multiple-choice "Type: " actions)))
     (if (nth 2 answer)
-        (format (nth 2 answer) (read-number (format "%s " (nth 1 answer))))
+        (format (nth 2 answer)
+                (read-number (format "%s " (nth 1 answer))))
       (pcase (car answer)
         (?t (read-string (format-time-string "%Y-%m-%d %H:%M:%S"
                                              (current-time))))
         (?o (read-string "Value: "))))))
 
-(defun ivy-fd-read-size ()
+(defun ivy-fd-read-size (&rest _args)
   "Read fdfind size options."
   (let* ((actions '((?b "bytes" "b")
                     (?k "kilobytes" "k")
@@ -688,127 +658,15 @@ If value is empty string, return nil."
                                (?e ,(format "equal then %s" value) ""))))))
         (concat prefix value)))))
 
-(defvar ivy-fd-multi-options '(:exclude :extension))
-(defun ivy-fd-read-multy-options (keyword)
-  "Read multiple options for KEYWORD."
-  (let* ((name (ivy-fd-keyword-to-option keyword))
-         (extensions
-          (split-string
-           (string-trim (read-string
-                         (format "%s (empty to unset) " name)
-                         (string-join (ivy-fd-hydra-get keyword) "\s")))
-           "\s")))
-    (ivy-fd-hydra-put keyword extensions)))
 
-(defun ivy-fd-normalize-multi-option (keyword)
-  "Return string with KEYWORD option."
-  (when-let ((value (ivy-fd-hydra-get keyword)))
-    (mapconcat
-     (lambda (v) (concat
-             (ivy-fd-keyword-to-option
-              keyword)
-             " " v))
-     value "\s")))
-
-(defun ivy-fd-normalize-multi-options ()
-  "Return options for exclude and extensions."
-  (string-join (mapcar #'ivy-fd-normalize-multi-option
-                       ivy-fd-multi-options)
-               "\s"))
-
-(defun ivy-fd-toggle-file-type ()
-  "Toggle file and directory flags."
-  (let ((value (not (ivy-fd-hydra-get :type.f))))
-    (ivy-fd-hydra-put :type.f value)
-    (ivy-fd-hydra-put :type.d (when value nil))))
-
-(defun ivy-fd-normalize-type-options ()
-  "Return string with --type options."
-  (let ((types (mapcar
-                (lambda (k) (when-let ((value (ivy-fd-hydra-get
-                                          (intern (concat ":type." k)))))
-                         (concat "--type " k)))
-                '("f" "d" "l" "e" "x"))))
-    (string-join (delq nil types) "\s")))
-
-(defun ivy-fd-map-boolean-options ()
-  "Return string with active flags from `ivy-fd-boolean-options'."
-  (string-join
-   (mapcar
-    #'ivy-fd-keyword-to-option
-    (seq-filter (apply-partially #'ivy-fd-hydra-get)
-                ivy-fd-boolean-options))
-   "\s"))
-
-(defun ivy-fd-toggle-dir-type ()
-  "Toggle directory and file flags."
-  (let ((value (not (ivy-fd-hydra-get :type.d))))
-    (ivy-fd-hydra-put :type.d value)
-    (ivy-fd-hydra-put :type.f (when value nil))))
-
-(defun ivy-fd-get-duration-options ()
-  "Return string with changed-within and changed-before options."
-  (seq-reduce
-   (lambda (acc key) (if-let ((value (ivy-fd-hydra-get-non-empty key)))
-                    (concat acc " "
-                            (ivy-fd-keyword-to-option key)
-                            " " value)
-                  acc))
-   '(:changed-within :changed-before) ""))
-
-(defun ivy-fd-get-max-depth ()
-  "Get string with max-depth option and value or empty string."
-  (or
-   (when-let ((value (ivy-fd-maybe-to-number
-                      (ivy-fd-hydra-get :max-depth))))
-     (when (> value 0) (format "--max-depth %d" value)))
-   ""))
-
-(defun ivy-fd-get-size ()
-  "Get string with size option and value or empty string."
-  (if-let ((value (ivy-fd-hydra-get-non-empty :size)))
-      (format "--size %s" value)
-    ""))
 
 (defun ivy-fd-get-flags ()
   "Return string with fd flags from `ivy-fd-hydra-state'."
   (string-join
-   (seq-remove #'string-empty-p
-               (mapcar #'funcall
-                       '(ivy-fd-map-boolean-options
-                         ivy-fd-normalize-type-options
-                         ivy-fd-get-duration-options
-                         ivy-fd-normalize-multi-options
-                         ivy-fd-get-max-depth
-                         ivy-fd-get-size)))
+   ivy-fd-args
    "\s"))
 
-;; (defclass ivy-fd-options ()
-;;   ((no-ignore :initarg :no-ignore
-;;               :initform nil
-;;               :type (or null t)
-;;               :custom boolean
-;;               :documentation "Do not respect .(git|fd)ignore files.")
-;;    (max-depth :initarg :max-depth
-;;               :type number
-;;               :initform 0
-;;               :documentation "Maximum search depth."))
-;;   "A class for fd options.")
 
-;; (cl-defmethod call-fd-options ((km-pers ivy-fd-options) &optional scriptname)
-;;   "Dial the phone for the ivy-fd-options PERS.
-;; Execute the program SCRIPTNAME to dial the phone."
-;;   (message "Dialing the phone for %s in %s"  (slot-value km-pers 'name) (slot-value km-pers 'phone)))
-
-;; (setq km-pers (ivy-fd-options :no-ignore t :max-depth 3))
-;; (setq km-pers-2 (make-instance 'ivy-fd-options :name "Karim" :birthday "Jule" :phone "111-1111"))
-;; (slot-value km-pers :no-ignore)
-;; (call-fd-options km-pers-2)
-;; (call-fd-options km-pers)
-
-(defun ivy-fd-toggle (keyword)
-  "Toggle value of KEYWORD."
-  (ivy-fd-hydra-put keyword (not (ivy-fd-hydra-get keyword))))
 
 (defun ivy-fd--plist-keys (plist)
   "Return the keys in PLIST."
@@ -890,105 +748,8 @@ If value is empty string, return nil."
         (ivy-fd-plist-merge ivy-fd-hydra-state
                             (ivy-fd-get-dir-settings directory))))
 
-(defhydra ivy-fd-hydra-file-types (:color pink)
-  "
---type
 
-_f_ file %(ivy-fd-hydra-get :type.f)
-_d_ directory  %(ivy-fd-hydra-get :type.d)
-_l_ symlink  %(ivy-fd-hydra-get :type.l)
-_x_ executable %(ivy-fd-hydra-get :type.x)
-_e_ empty %(ivy-fd-hydra-get :type.e)
-"
-  ("f" (ivy-fd-toggle-file-type) nil)
-  ("d" (ivy-fd-toggle-dir-type) nil)
-  ("l" (ivy-fd-toggle :type.l) nil)
-  ("x" (ivy-fd-toggle :type.x) nil)
-  ("e" (ivy-fd-toggle :type.e) nil)
-  ("RET" (ivy-fd-async ivy-fd-current-dir ivy-fd-last-input)
-   :exit t)
-  ("q" nil))
 
-(defhydra ivy-fd-hydra (:color pink)
-  "
-fd options:
-
-_h_ --hidden         %(ivy-fd-hydra-get :hidden) search hidden
-_I_ --no-ignore      %(ivy-fd-hydra-get :no-ignore) ignore .git|fdignores
-_n_ --no-ignore-vcs  %(ivy-fd-hydra-get :no-ignore-vcs) ignore .gitignore
-_C_ --case-sensitive %(ivy-fd-hydra-get :case-sensitive) (default: smart case)
-_i_ --ignore-case    %(ivy-fd-hydra-get :ignore-case) (default: smart case)
-_g_ --glob           %(ivy-fd-hydra-get :glob)
-_F_ --fixed-strings  %(ivy-fd-hydra-get :fixed-strings) as a literal string
-_a_ --absolute-path  %(ivy-fd-hydra-get :absolute-path)  absolute paths
-_L_ --follow         %(ivy-fd-hydra-get :follow)  follow symbolic links
-_p_ --full-path      %(ivy-fd-hydra-get :full-path) search full path
-
-   Depth
-
-_m_ --max-depth %(ivy-fd-hydra-get :max-depth)
-_<up>_ increase
-_<down>_ decrease
-
---type
-
-_f_ file %(ivy-fd-hydra-get :type.f)
-_d_ directory  %(ivy-fd-hydra-get :type.d)
-_l_ symlink  %(ivy-fd-hydra-get :type.l)
-_x_ executable %(ivy-fd-hydra-get :type.x)
-_e_ empty %(ivy-fd-hydra-get :type.e)
-
-_._ --extension %(ivy-fd-hydra-get :extension)
-_s_ --size  %(ivy-fd-hydra-get :size)
-_E_ --exclude %(ivy-fd-hydra-get :exclude) <pattern>
-
-By file modification
-
-_w_ within %(ivy-fd-hydra-get :changed-within)
-_b_ before %(ivy-fd-hydra-get :changed-before)
-
-Settings
-
-_RET_ done
-_D_ change directory %`ivy-fd-current-dir
-_r_ apply directory settings
-_z_ merge with directory settings
-"
-  ("h" (ivy-fd-toggle :hidden) nil)
-  ("I" (ivy-fd-toggle :no-ignore) nil)
-  ("n" (ivy-fd-toggle :no-ignore-vcs) nil)
-  ("C" (ivy-fd-toggle :case-sensitive) nil)
-  ("i" (ivy-fd-toggle :ignore-case) nil)
-  ("g" (ivy-fd-toggle :glob) nil)
-  ("F" (ivy-fd-toggle :fixed-strings) nil)
-  ("a" (ivy-fd-toggle :absolute-path) nil)
-  ("L" (ivy-fd-toggle :follow) nil)
-  ("p" (ivy-fd-toggle :full-path) nil)
-  ("m" (ivy-fd-fdfind-read-max-depth) nil)
-  ("<up>" (ivy-fd-increase-depth) nil)
-  ("<down>" (ivy-fd-decrease-depth) nil)
-  ("f" (ivy-fd-toggle-file-type) nil)
-  ("d" (ivy-fd-toggle-dir-type) nil)
-  ("l" (ivy-fd-toggle :type.l) nil)
-  ("x" (ivy-fd-toggle :type.x) nil)
-  ("e" (ivy-fd-toggle :type.e) nil)
-  ("." (ivy-fd-read-multy-options :extension) nil)
-  ("s" (ivy-fd-hydra-put :size (ivy-fd-read-size)) nil)
-  ("E" (ivy-fd-read-multy-options :exclude) nil)
-  ("w" (ivy-fd-hydra-put :changed-within (ivy-fd-read-date)) nil)
-  ("b" (ivy-fd-hydra-put :changed-before (ivy-fd-read-date)) nil)
-  ("RET" (ivy-fd-async ivy-fd-current-dir ivy-fd-last-input) :exit t)
-  ("D" (setq ivy-fd-current-dir (read-directory-name
-                                 "Directory: "
-                                 (or ivy-fd-current-dir default-directory)))
-   nil)
-  ("r" (ivy-fd-set-directory-settings
-        (or ivy-fd-current-dir default-directory))
-   nil)
-  ("z" (ivy-fd-merge-directory-settings
-        (or ivy-fd-current-dir default-directory))
-   nil)
-  ("q" nil))
 
 ;;;###autoload
 (defun ivy-fd-read-flags ()
@@ -997,8 +758,8 @@ _z_ merge with directory settings
   (if (active-minibuffer-window)
       (progn
         (setq ivy-fd-last-input ivy-text)
-        (ivy-quit-and-run (ivy-fd-hydra/body)))
-    (ivy-fd-hydra/body)))
+        (ivy-quit-and-run (ivy-fd-transient)))
+    (ivy-fd-transient)))
 
 ;;;###autoload
 (defun ivy-fd-find-directory-up ()
@@ -1009,9 +770,12 @@ _z_ merge with directory settings
              (ivy-quit-and-run
                (funcall-interactively #'ivy-fd-async
                                       (ivy-fd-parent-dir ivy-fd-current-dir)
+                                      ivy-fd-args
                                       ivy-fd-last-input)))
     (funcall-interactively #'ivy-fd-async
-                           (ivy-fd-parent-dir default-directory))))
+                           (ivy-fd-parent-dir default-directory)
+                           ivy-fd-args
+                           ivy-fd-last-input)))
 
 (defun ivy-fd-visit-dir (dir)
   "Change `ivy-fd-current-dir' to DIR."
@@ -1063,45 +827,117 @@ If FILENAME is absolute just return it."
                                            directory))
                  (funcall-interactively #'ivy-fd-async
                                         directory
+                                        ivy-fd-args
                                         ivy-fd-last-input))))
     (let ((directory (read-directory-name "Search in:\s")))
       (setq ivy-fd-hydra-state (ivy-fd-set-directory-settings
                                 directory))
       (funcall-interactively #'ivy-fd-async
-                             directory))))
+                             directory
+                             ivy-fd-args
+                             ivy-fd-last-input))))
 
 (defun ivy-fd-make-shell-command ()
   "Return string fd shell command."
-  (concat ivy-fd-exec-path " -0 --color=never " (ivy-fd-get-flags)
+  (concat ivy-fd-exec-path " -0 --color=never " (string-join ivy-fd-args)
           (concat " %s . ")))
 
 ;;;###autoload
 (defun ivy-fd-toggle-hidden ()
   "Toggle --hidden flag."
   (interactive)
-  (ivy-fd-toggle :hidden)
+  (setq ivy-fd-args (if
+                        (member "--hidden" ivy-fd-args)
+                        (delete "--hidden" ivy-fd-args)
+                      (push "--hidden" ivy-fd-args)))
   (if (active-minibuffer-window)
       (progn (setq ivy-fd-last-input ivy-text)
              (ivy-quit-and-run
                (funcall-interactively #'ivy-fd-async
                                       ivy-fd-current-dir
+                                      ivy-fd-args
                                       ivy-fd-last-input)))
     (funcall-interactively #'ivy-fd-async
-                           (read-directory-name "Search in:\s"))))
+                           (read-directory-name "Search in:\s")
+                           ivy-fd-args
+                           ivy-fd-last-input)))
+
+(require 'transient)
+
+
+(defvar ivy-fd-file-types '(("f" . "file")
+                            ("d" . "directory")
+                            ("l" . "symlink")
+                            ("x" . "executable")
+                            ("e" . "empty")
+                            ("p" . "pipe")))
+
+
+(transient-define-argument ivy-fd-read-file-type ()
+  "Read file type for fd."
+  :argument "-t "
+  :description "File type"
+  :multi-value 'repeat
+  :class 'transient-option
+  :choices
+  (lambda (str pred action)
+    (if (eq action 'metadata)
+        `(metadata
+          (annotation-function . (lambda (str)
+                                   (concat " " (or
+                                                (cdr
+                                                 (assoc str
+                                                        ivy-fd-file-types))
+                                                ""))))
+          (cycle-sort-function . (lambda (it) it))
+          (display-sort-function . (lambda (it) it)))
+      (complete-with-action action ivy-fd-file-types str pred))))
+
+(transient-define-argument ivy-fd-read-file-ext ()
+  "Read file type for fd."
+  :argument "-e "
+  :description "File extension"
+  :multi-value 'repeat
+  :class 'transient-option)
+
+(transient-define-prefix ivy-fd-transient ()
+  "Fd 8.3.1.
+USAGE:
+fd [FLAGS/OPTIONS] [<pattern>] [<path>...]
+
+FLAGS:"
+  :value (lambda () ivy-fd-args)
+  ["Flags"
+   ("-H" " Search hidden files and directories" "--hidden")
+   ("-I" " Do not respect .(git|fd)ignore" "--no-ignore")
+   ("-s" " Case-sensitive search (default: smart-case)" "--case-sensitive")
+   ("-i" " Case-insensitive search (default: smart-case)" "--ignore-case")
+   ("-g" " Glob-based search (default: regular expression)" "--glob")
+   ("-a" " Show absolute instead of relative" "--absolute-path")
+   ("-l" " Use a long listing format with file metadata" "--list-details")
+   ("-L" " Follow symbolic links" "--follow")
+   ("-p" "Search full abs." "--full-path")]
+  ["Options"
+   ("t" ivy-fd-read-file-type)
+   ("e" ivy-fd-read-file-ext)
+   ("d" "Maximum search depth " "--max-depth " :class transient-option)
+   ("w" "Filter by file modification time (newer than) " "--changed-within "
+    :class transient-option
+    :reader ivy-fd-read-date)
+   ("b" "Filter by file modification time (older than) " "--changed-before "
+    :class transient-option
+    :reader ivy-fd-read-date)
+   ("s" "Size" "--size "
+    :class transient-option
+    :reader ivy-fd-read-size)]
+  ["Actions"
+   ("RET" "Run" ivy-fd-async)])
 
 ;;;###autoload
 (defun ivy-fd-change-max-depth ()
   "Change --max-depth flag."
   (interactive)
-  (if (active-minibuffer-window)
-      (progn (setq ivy-fd-last-input ivy-text)
-             (ivy-quit-and-run
-               (ivy-fd-fdfind-read-max-depth)
-               (funcall-interactively #'ivy-fd-async
-                                      ivy-fd-current-dir
-                                      ivy-fd-last-input)))
-    (ivy-fd-fdfind-read-max-depth)
-    (funcall-interactively #'ivy-fd-async)))
+  (read-string "Max-depth"))
 
 (defvar ivy-fd-map
   (let ((map (make-sparse-keymap)))
@@ -1112,7 +948,6 @@ If FILENAME is absolute just return it."
     (define-key map (kbd "C-c C-o") #'ivy-fd-find-file-other-window)
     (define-key map (kbd "M-.") #'ivy-fd-toggle-hidden)
     (define-key map (kbd "M-<up>") #'ivy-fd-change-max-depth)
-    (define-key map (kbd "C-c C-f") #'ivy-fd-hydra-file-types/body)
     map))
 
 (defvar ivy-fd-sync-command nil)
@@ -1152,7 +987,7 @@ INITIAL-INPUT can be given as the initial minibuffer input."
     (unless directory
       (setq ivy-fd-hydra-state
             (ivy-fd-get-dir-settings project)))
-    (funcall-interactively (or 'ivy-fd-async) project initial-input)))
+    (funcall-interactively (or 'ivy-fd-async) project nil initial-input)))
 
 ;;;###autoload
 (defun ivy-fd-async-project (&optional directory initial-input)
@@ -1160,30 +995,29 @@ INITIAL-INPUT can be given as the initial minibuffer input."
   (interactive)
   (let ((project (or directory (funcall ivy-fd-resolve-project-root-fn)
                      default-directory)))
-    (unless directory
-      (setq ivy-fd-hydra-state
-            (ivy-fd-get-dir-settings project)))
-    (funcall-interactively (or 'ivy-fd-async) project initial-input)))
+    (funcall-interactively (or 'ivy-fd-async)
+                           (or directory project) nil initial-input)))
 
 ;;;###autoload
-(defun ivy-fd-async-from-source ()
-  "Find directory from source settings `ivy-fd-per-directory-settings'."
-  (interactive)
-  (let ((dir (completing-read "Source: " ivy-fd-per-directory-settings)))
-    (setq ivy-fd-hydra-state (ivy-fd-get-dir-settings dir))
-    (ivy-fd-async dir)))
+(defun ivy-fd-identity-or-preview (file)
+  "Return absolute name of FILE if `ivy-exit' is non nil, otherwise preview."
+  (setq file (ivy-fd-expand-file file))
+  (if ivy-exit
+      file
+    (ivy-fd-preview-file file)))
+
 
 ;;;###autoload
-(defun ivy-fd-async (&optional directory initial-input args)
+(defun ivy-fd-async (&optional directory args initial-input action)
   "Search in DIRECTORY or `default-directory' with INITIAL-INPUT and ARGS."
   (interactive)
   (setq ivy-fd-current-dir (ivy-fd-slash
                             (expand-file-name
                              (or directory default-directory))))
-  (unless directory
-    (setq ivy-fd-hydra-state (or args
-                                 (ivy-fd-get-dir-settings ivy-fd-current-dir))))
-  (setq ivy-fd-async-command (ivy-fd-make-shell-command))
+  (setq ivy-fd-args (or args (transient-args transient-current-command)))
+  (setq ivy-fd-async-command (concat ivy-fd-exec-path " -0 --color=never "
+                                     (string-join ivy-fd-args)
+                                     (concat " %s . ")))
   (unwind-protect
       (let ((default-directory ivy-fd-current-dir))
         (ivy-read (concat
@@ -1196,39 +1030,14 @@ INITIAL-INPUT can be given as the initial minibuffer input."
                   #'ivy-fd-async-function
                   :initial-input initial-input
                   :dynamic-collection t
-                  :history 'ivy-fd-async-history
                   :keymap ivy-fd-map
-                  :action 'ivy-fd-find-file-or-preview
-                  :caller 'ivy-fd-async))
-    (ivy-fd-delete-process)))
-
-;;;###autoload
-(defun ivy-fd-async-read-directory (&optional directory initial-input args)
-  "Search in DIRECTORY or `default-directory' with INITIAL-INPUT and ARGS."
-  (interactive)
-  (setq ivy-fd-current-dir (ivy-fd-slash
-                            (expand-file-name
-                             (or directory default-directory))))
-  (unless directory
-    (setq ivy-fd-hydra-state (or args
-                                 (ivy-fd-get-dir-settings ivy-fd-current-dir))))
-  (setq ivy-fd-async-command (ivy-fd-make-shell-command))
-  (unwind-protect
-      (let ((default-directory ivy-fd-current-dir))
-        (ivy-read (concat
-                   (abbreviate-file-name ivy-fd-current-dir)
-                   ": "
-                   (let ((flags (string-trim (ivy-fd-get-flags))))
-                     (if (string-empty-p flags)
-                         ""
-                       (concat flags " "))))
-                  #'ivy-fd-async-function
-                  :initial-input initial-input
-                  :dynamic-collection t
-                  :history 'ivy-fd-async-history
-                  :keymap ivy-fd-map
-                  :action 'ivy-fd-find-file-or-preview
-                  :caller 'ivy-fd-async))
+                  :caller 'ivy-fd-async
+                  :action
+                  (lambda (file)
+                    (setq file (ivy-fd-expand-file file))
+                    (if ivy-exit
+                        (funcall (or action 'find-file) file)
+                      (ivy-fd-preview-file file)))))
     (ivy-fd-delete-process)))
 
 (ivy-add-actions 'ivy-fd-async
