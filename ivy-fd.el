@@ -1077,9 +1077,11 @@ If FILENAME is absolute just return it."
 
 ;;;###autoload
 (defun ivy-fd-toggle-hidden ()
-  "Toggle --hidden flag."
+  "Inside vc directory toggle --hidden flag, othervise :no-ignore-vcs."
   (interactive)
-  (ivy-fd-toggle :hidden)
+  (if (vc-root-dir)
+      (ivy-fd-toggle :hidden)
+    (ivy-fd-toggle :no-ignore-vcs))
   (if (active-minibuffer-window)
       (progn (setq ivy-fd-last-input ivy-text)
              (ivy-quit-and-run
@@ -1163,6 +1165,7 @@ INITIAL-INPUT can be given as the initial minibuffer input."
     (unless directory
       (setq ivy-fd-hydra-state
             (ivy-fd-get-dir-settings project)))
+    (ivy-fd-hydra-put :type.f t)
     (funcall-interactively (or 'ivy-fd-async) project initial-input)))
 
 ;;;###autoload
