@@ -141,7 +141,7 @@ at the values with which this function was called."
               ivy-fd-boolean-options)
            (:exclude
             (repeat (string :tag "Exclude")))
-           (:extensions (repeat (string :tag "Extensions")))
+           (:extension (repeat (string :tag "Extensions")))
            (:max-depth (number :tag "Max depth" 1))
            (:type (plist :options
                          ((e (const :tag "empty" t))
@@ -310,15 +310,17 @@ IGNORED may omit --exclude flag."
    flags
    (ivy-fd-generic-list-to-string "." dir)))
 
-(defun ivy-fd-find (place &optional flags)
+(defun ivy-fd-find (place &optional flags ignored)
   "Return list of files  in PLACE.
 PLACE can be a string of directory, list of directories, or alist of directories
 with extra flags.
 
-FLAGS should be string, list or alist of strings."
+FLAGS and IGNORES should be string, list or alist of strings.
+
+IGNORED may omit --exclude flag."
   (split-string (shell-command-to-string
-                 (ivy-fd-make-command place flags))
-                "\n" t))
+                 (ivy-fd-make-sortable-tr-command place flags ignored))
+                "\0" t))
 
 (defvar ivy-fd-async-command nil)
 
@@ -546,7 +548,7 @@ caused by spawning too many subprocesses too quickly."
 (defvar ivy-fd-async-history nil
   "History for `ivy-fd-async'.")
 
-(defun ivy-fd-async-function (input)
+(defun ivy-fd-async-function (input &rest _)
   "Call a \"locate\" style shell command with INPUT."
   (or
    (ivy-more-chars)
@@ -1045,6 +1047,28 @@ If FILENAME is absolute just return it."
   (setq file (ivy-fd-expand-file file))
   (find-file-other-window file))
 
+
+(defun ivy-fd-insert-filename ()
+  "Insert FILE name and exit minibuffer."
+  (interactive)
+  (when-let* ((curr (ivy-state-current ivy-last))
+              (variants
+               (seq-uniq
+                (list
+                 curr
+                 (replace-regexp-in-string "^./" "" curr)
+                 (ivy-fd-expand-file curr)
+                 (abbreviate-file-name (ivy-fd-expand-file curr))))))
+    (ivy-quit-and-run (insert
+                       (completing-read "Insert " variants)))))
+
+(defun ivy-fd-copy-filename ()
+  "Copy FILE name."
+  (interactive)
+  (when-let ((curr (ivy-state-current ivy-last)))
+    (kill-new (ivy-fd-expand-file curr))
+    (message "Copied filename")))
+
 ;;;###autoload
 (defun ivy-fd-find-file-other-window ()
   "Find FILE if `ivy-exit', otherwise preview FILE."
@@ -1115,6 +1139,8 @@ If FILENAME is absolute just return it."
     (define-key map (kbd "M-.") #'ivy-fd-toggle-hidden)
     (define-key map (kbd "M-<up>") #'ivy-fd-change-max-depth)
     (define-key map (kbd "C-c C-f") #'ivy-fd-hydra-file-types/body)
+    (define-key map (kbd "C-c C-i") #'ivy-fd-insert-filename)
+    (define-key map (kbd "M-w") #'ivy-fd-copy-filename)
     map))
 
 (defvar ivy-fd-sync-command nil)
@@ -1176,6 +1202,7 @@ INITIAL-INPUT can be given as the initial minibuffer input."
     (setq ivy-fd-hydra-state (ivy-fd-get-dir-settings dir))
     (ivy-fd-async dir)))
 
+
 ;;;###autoload
 (defun ivy-fd-async (&optional directory initial-input args)
   "Search in DIRECTORY or `default-directory' with INITIAL-INPUT and ARGS."
@@ -1212,6 +1239,8 @@ INITIAL-INPUT can be given as the initial minibuffer input."
   (setq ivy-fd-current-dir (ivy-fd-slash
                             (expand-file-name
                              (or directory default-directory))))
+  (ivy-fd-hydra-put :type.d t)
+  (ivy-fd-hydra-put :type.f nil)
   (unless directory
     (setq ivy-fd-hydra-state (or args
                                  (ivy-fd-get-dir-settings ivy-fd-current-dir))))
