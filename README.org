@@ -24,23 +24,21 @@ Download repository and it to your load path in your init file:
 *** With use-package and straight
 
 #+begin_src elisp :eval no
-
 (use-package ivy-fd
-	:straight (ivy-fd
-			       :repo "KarimAziev/ivy-fd"
-			       :type git
-			       :host github)
-	:bind ((:map ivy-fd-map
-			         ("C-l" . ivy-fd-find-directory-up)
-			         ("C-q" . ivy-fd-read-flags)
-			         ("C-." . ivy-fd-change-dir)
-			         ("C-<backspace>" . ivy-fd-find-directory-up)
-			         ("C-c C-o" . ivy-fd-find-file-other-window))
-		     (:map ivy-fd-async-keymap
-			         ("C->" . ivy-fd-async-edit-commmand)))
-	:commands (ivy-fd-async
-			       ivy-fd-preview-file))
-
+  :straight (ivy-fd
+             :repo "KarimAziev/ivy-fd"
+             :type git
+             :host github)
+  :bind ((:map ivy-fd-map
+               ("C-l" . ivy-fd-find-directory-up)
+               ("C-q" . ivy-fd-read-flags)
+               ("C-." . ivy-fd-change-dir)
+               ("C-<backspace>" . ivy-fd-find-directory-up)
+               ("C-c C-o" . ivy-fd-find-file-other-window))
+         (:map ivy-fd-async-keymap
+               ("C->" . ivy-fd-async-edit-commmand)))
+  :commands (ivy-fd-async
+             ivy-fd-preview-file))
 #+end_src
 
 
