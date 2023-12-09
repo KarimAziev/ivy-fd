@@ -1263,6 +1263,63 @@ INITIAL-INPUT can be given as the initial minibuffer input."
                   :caller 'ivy-fd-async))
     (ivy-fd-delete-process)))
 
+(defun ivy-fd-format-time-readable (time)
+  "Calculate and format the time difference from the current TIME.
+
+Argument TIME is the time value that will be compared with the current time to
+calculate the time difference."
+  (let ((diff-secs (-
+                    (float-time (current-time))
+                    (float-time time))))
+    (pcase-let ((`(,format-str . ,value)
+                 (cond ((< diff-secs 60)
+                        (cons "%d second" (truncate diff-secs)))
+                       ((< diff-secs 3600)
+                        (cons "%d minute" (truncate (/ diff-secs 60))))
+                       ((< diff-secs 86400)
+                        (cons "%d hour" (truncate (/ diff-secs 3600))))
+                       ((< diff-secs 2592000)
+                        (cons "%d day" (truncate (/ diff-secs 86400))))
+                       (t
+                        (cons "%d month" (truncate (/ diff-secs 2592000)))))))
+      (format (concat format-str (if (= value 1) " ago" "s ago")) value))))
+
+(defun ivy-fd--read-file-display-transformer (str)
+  "Transform filename STR when reading files."
+  (let ((filename (if (file-name-absolute-p str)
+                      str
+                    (expand-file-name str ivy-fd-current-dir))))
+    (let ((parts (delete nil `(,str ,(file-symlink-p filename))))
+          (mod-time
+           (ivy-fd-format-time-readable
+            (file-attribute-modification-time
+             (file-attributes (if (file-directory-p
+                                   filename)
+                                  (file-name-as-directory
+                                   filename)
+                                filename)))))
+          (face
+           (cond ((not (file-readable-p filename)) 'ivy-match-required-face)
+                 ((file-accessible-directory-p filename) 'ivy-subdir)
+                 ((and
+                   (file-regular-p filename)
+                   (file-executable-p filename))
+                  'compilation-info)
+                 (t nil)))
+          result)
+      (when face (setcar parts (propertize (car parts) 'face face)))
+      (setq result (string-join parts " => "))
+      (if mod-time
+          (concat result
+                  (propertize " " 'display
+                              (list 'space :align-to
+                                    120))
+                  mod-time)
+        result))))
+
+(ivy-configure 'ivy-fd-async
+    :display-transformer-fn #'ivy-fd--read-file-display-transformer)
+
 (ivy-add-actions 'ivy-fd-async
                  '(("j" ivy-fd-find-file-other-window-action
                     "find file in other window")))
