@@ -292,13 +292,16 @@ IGNORES may omit --exclude flag."
 
 ;;;###autoload
 (defun ivy-fd-multi-dir (place &optional flags ignored)
-  "Return list of files  in PLACE.
-PLACE can be a string of directory, list of directories, or alist of directories
-with extra flags.
+  "Search multiple directories using `fdfind' and format output.
 
-FLAGS and IGNORES should be string, list or alist of strings.
+Argument PLACE is a string of directory, list of directories, or alist of
+directories with extra flags.
 
-IGNORED may omit --exclude flag."
+Optional argument FLAGS is a string, list, or alist specifying additional flags
+for the search command.
+
+Optional argument IGNORED is a string, list, or alist specifying patterns to
+ignore, which may omit the --exclude flag."
   (split-string (shell-command-to-string
                  (ivy-fd-make-sortable-tr-command place flags ignored))
                 "\0" t))
@@ -311,13 +314,16 @@ IGNORED may omit --exclude flag."
    (ivy-fd-generic-list-to-string "." dir)))
 
 (defun ivy-fd-find (place &optional flags ignored)
-  "Return list of files  in PLACE.
-PLACE can be a string of directory, list of directories, or alist of directories
-with extra flags.
+  "Search files using `fdfind' and format output for Ivy completion.
 
-FLAGS and IGNORES should be string, list or alist of strings.
+Argument PLACE is a string representing the directory to search in, a list of
+directories, or an alist of directories with extra flags.
 
-IGNORED may omit --exclude flag."
+Optional argument FLAGS is a string, list, or alist specifying additional flags
+for the search command.
+
+Optional argument IGNORED is a string, list, or alist specifying patterns to
+ignore, which may omit the --exclude flag."
   (split-string (shell-command-to-string
                  (ivy-fd-make-sortable-tr-command place flags ignored))
                 "\0" t))
@@ -604,7 +610,10 @@ Display remains until next event is input."
   (plist-get ivy-fd-hydra-state keyword))
 
 (defun ivy-fd-hydra-get-non-empty (keyword)
-  "Get value of KEYWORD from `fd-hydra-state'."
+  "Return non-empty string value for KEYWORD from `ivy-fd-hydra-state' if exists.
+
+Argument KEYWORD is a symbol used to retrieve a value from `ivy-fd-hydra-state'
+plist."
   (when-let ((value (plist-get ivy-fd-hydra-state keyword)))
     (when (and (stringp value)
                (not (string-empty-p value)))
@@ -626,7 +635,7 @@ If value is empty string, return nil."
         (t value)))
 
 (defun ivy-fd-increase-depth ()
-  "Increase depth."
+  "Increase the search depth by 1 in `ivy-fd'."
   (let ((depth (or (ivy-fd-maybe-to-number
                     (ivy-fd-hydra-get :max-depth))
                    1)))
@@ -634,7 +643,7 @@ If value is empty string, return nil."
       (ivy-fd-hydra-put :max-depth (1+ depth)))))
 
 (defun ivy-fd-decrease-depth ()
-  "Increase depth."
+  "Decrease the search depth by one if it's greater than one."
   (when-let ((depth (ivy-fd-maybe-to-number
                      (ivy-fd-hydra-get :max-depth))))
     (when (and (numberp depth)
@@ -840,7 +849,10 @@ If value is empty string, return nil."
     result))
 
 (defun ivy-fd-plist-omit-nils (plist)
-  "Return the keys in PLIST."
+  "Remove nil values from PLIST, returning a cleaned property list.
+
+Argument PLIST is a property list from which entries with nil values are
+omitted."
   (let* ((result (list 'head))
          (last result))
     (while plist
@@ -1071,7 +1083,7 @@ If FILENAME is absolute just return it."
 
 ;;;###autoload
 (defun ivy-fd-find-file-other-window ()
-  "Find FILE if `ivy-exit', otherwise preview FILE."
+  "Open a file in another window using Ivy for completion."
   (interactive)
   (ivy-exit-with-action #'ivy-fd-find-file-other-window-action))
 
@@ -1184,7 +1196,12 @@ INITIAL-INPUT can be given as the initial minibuffer input."
 
 ;;;###autoload
 (defun ivy-fd-async-project (&optional directory initial-input)
-  "Search in DIRECTORY or `default-directory' with INITIAL-INPUT."
+  "Search asynchronously in a project DIRECTORY with `fd'.
+
+Optional argument DIRECTORY is the directory to search in. It defaults to the
+project root or `default-directory'.
+
+Optional argument INITIAL-INPUT is the initial input for the search."
   (interactive)
   (let ((project (or directory (funcall ivy-fd-resolve-project-root-fn)
                      default-directory)))
@@ -1210,9 +1227,9 @@ INITIAL-INPUT can be given as the initial minibuffer input."
   (setq ivy-fd-current-dir (ivy-fd-slash
                             (expand-file-name
                              (or directory default-directory))))
-  (unless directory
-    (setq ivy-fd-hydra-state (or args
-                                 (ivy-fd-get-dir-settings ivy-fd-current-dir))))
+  (setq ivy-fd-hydra-state (or args
+                               (ivy-fd-get-dir-settings
+                                ivy-fd-current-dir)))
   (setq ivy-fd-async-command (ivy-fd-make-shell-command))
   (unwind-protect
       (let ((default-directory ivy-fd-current-dir))
@@ -1234,7 +1251,16 @@ INITIAL-INPUT can be given as the initial minibuffer input."
 
 ;;;###autoload
 (defun ivy-fd-async-read-directory (&optional directory initial-input args)
-  "Search in DIRECTORY or `default-directory' with INITIAL-INPUT and ARGS."
+  "Search files asynchronously in a DIRECTORY with `fd' and Ivy.
+
+Optional argument DIRECTORY is the directory to read from. It defaults to
+`default-directory'.
+
+Optional argument INITIAL-INPUT is the initial input for the search. It defaults
+to nil.
+
+Optional argument ARGS is additional arguments for the search. It defaults to
+nil."
   (interactive)
   (setq ivy-fd-current-dir (ivy-fd-slash
                             (expand-file-name
