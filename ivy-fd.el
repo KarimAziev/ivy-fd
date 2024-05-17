@@ -1229,7 +1229,8 @@ Optional argument INITIAL-INPUT is the initial input for the search."
                              (or directory default-directory))))
   (setq ivy-fd-hydra-state (or args
                                (ivy-fd-get-dir-settings
-                                ivy-fd-current-dir)))
+                                ivy-fd-current-dir)
+                               ivy-fd-hydra-state))
   (setq ivy-fd-async-command (ivy-fd-make-shell-command))
   (unwind-protect
       (let ((default-directory ivy-fd-current-dir))
