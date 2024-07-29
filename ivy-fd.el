@@ -708,7 +708,7 @@ If value is empty string, return nil."
            (string-trim (read-string
                          (format "%s (empty to unset) " name)
                          (string-join (ivy-fd-hydra-get keyword) "\s")))
-           "\s")))
+           "\s" t)))
     (ivy-fd-hydra-put keyword extensions)))
 
 (defun ivy-fd-normalize-multi-option (keyword)
