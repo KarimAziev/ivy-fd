@@ -202,7 +202,7 @@ at the values with which this function was called."
 
 (defun ivy-fd-parent-dir (path)
   "Return the parent directory to PATH with slash."
-  (when-let ((path (ivy-fd-parent path)))
+  (when-let* ((path (ivy-fd-parent path)))
     (ivy-fd-slash path)))
 
 (defun ivy-fd-generic-list-to-string (&rest flags)
@@ -571,7 +571,7 @@ Display remains until next event is input."
   (interactive "f")
   (if (file-directory-p file)
       (ivy-fd-visit-dir file)
-    (when-let ((filename (and
+    (when-let* ((filename (and
                           file
                           (file-readable-p file)
                           (file-exists-p file)
@@ -614,7 +614,7 @@ Display remains until next event is input."
 
 Argument KEYWORD is a symbol used to retrieve a value from `ivy-fd-hydra-state'
 plist."
-  (when-let ((value (plist-get ivy-fd-hydra-state keyword)))
+  (when-let* ((value (plist-get ivy-fd-hydra-state keyword)))
     (when (and (stringp value)
                (not (string-empty-p value)))
       value)))
@@ -644,7 +644,7 @@ If value is empty string, return nil."
 
 (defun ivy-fd-decrease-depth ()
   "Decrease the search depth by one if it's greater than one."
-  (when-let ((depth (ivy-fd-maybe-to-number
+  (when-let* ((depth (ivy-fd-maybe-to-number
                      (ivy-fd-hydra-get :max-depth))))
     (when (and (numberp depth)
                (> depth 1))
@@ -713,7 +713,7 @@ If value is empty string, return nil."
 
 (defun ivy-fd-normalize-multi-option (keyword)
   "Return string with KEYWORD option."
-  (when-let ((value (ivy-fd-hydra-get keyword)))
+  (when-let* ((value (ivy-fd-hydra-get keyword)))
     (mapconcat
      (lambda (v) (concat
              (ivy-fd-keyword-to-option
@@ -736,7 +736,7 @@ If value is empty string, return nil."
 (defun ivy-fd-normalize-type-options ()
   "Return string with --type options."
   (let ((types (mapcar
-                (lambda (k) (when-let ((value (ivy-fd-hydra-get
+                (lambda (k) (when-let* ((value (ivy-fd-hydra-get
                                           (intern (concat ":type." k)))))
                          (concat "--type " k)))
                 '("f" "d" "l" "e" "x"))))
@@ -760,7 +760,7 @@ If value is empty string, return nil."
 (defun ivy-fd-get-duration-options ()
   "Return string with changed-within and changed-before options."
   (seq-reduce
-   (lambda (acc key) (if-let ((value (ivy-fd-hydra-get-non-empty key)))
+   (lambda (acc key) (if-let* ((value (ivy-fd-hydra-get-non-empty key)))
                     (concat acc " "
                             (ivy-fd-keyword-to-option key)
                             " " value)
@@ -770,14 +770,14 @@ If value is empty string, return nil."
 (defun ivy-fd-get-max-depth ()
   "Get string with max-depth option and value or empty string."
   (or
-   (when-let ((value (ivy-fd-maybe-to-number
+   (when-let* ((value (ivy-fd-maybe-to-number
                       (ivy-fd-hydra-get :max-depth))))
      (when (> value 0) (format "--max-depth %d" value)))
    ""))
 
 (defun ivy-fd-get-size ()
   "Get string with size option and value or empty string."
-  (if-let ((value (ivy-fd-hydra-get-non-empty :size)))
+  (if-let* ((value (ivy-fd-hydra-get-non-empty :size)))
       (format "--size %s" value)
     ""))
 
@@ -843,7 +843,7 @@ If value is empty string, return nil."
   (let ((result)
         (keyword))
     (while (setq keyword (pop keywords))
-      (when-let ((value (plist-get pl keyword)))
+      (when-let* ((value (plist-get pl keyword)))
         (unless (null value)
           (setq result (append result (list keyword value))))))
     result))
@@ -1077,7 +1077,7 @@ If FILENAME is absolute just return it."
 (defun ivy-fd-copy-filename ()
   "Copy FILE name."
   (interactive)
-  (when-let ((curr (ivy-state-current ivy-last)))
+  (when-let* ((curr (ivy-state-current ivy-last)))
     (kill-new (ivy-fd-expand-file curr))
     (message "Copied filename")))
 
