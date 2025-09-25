@@ -6,7 +6,8 @@
 ;; URL: https://github.com/KarimAziev/ivy-fd
 ;; Version: 0.1.0
 ;; Keywords: files
-;; Package-Requires: ((emacs "27.1"))
+;; Package-Requires: ((emacs "27.1") (transient "0.9.3") (ivy "0.14.2"))
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -31,7 +32,8 @@
 
 
 (require 'ivy)
-(require 'hydra)
+(require 'transient)
+
 
 (defcustom ivy-fd-multi-command-flags '("--changed-within 1d"
                                         "--changed-before 1d")
@@ -39,7 +41,8 @@
   :type '(repeat string)
   :group 'ivy-fd)
 
-(defcustom ivy-fd-exec-path (executable-find "fdfind")
+(defcustom ivy-fd-exec-path (or (executable-find "fdfind")
+                                (executable-find "fd"))
   "Path to fd program."
   :group 'ivy-fd
   :type 'string)
@@ -60,6 +63,189 @@
     :glob
     :ignore-case
     :case-sensitive))
+
+(defun ivy-fd--mark-candidates (candidates)
+  "Mark CANDIDATES from ivy collection."
+  (dolist (cand (ivy-state-collection
+                 ivy-last))
+    (when (member cand
+                  candidates)
+      (let ((marked-cand (concat
+                          ivy-mark-prefix
+                          cand)))
+        (setq ivy--old-cands
+              ivy--all-candidates)
+        (setcar
+         (member cand
+                 ivy--all-candidates)
+         (setcar
+          (member cand
+                  ivy--old-cands)
+          marked-cand))
+        (setq ivy-marked-candidates
+              (append
+               ivy-marked-candidates
+               (list
+                marked-cand)))))))
+
+(defun ivy-fd--plist-omit (plist keywords)
+  "Omit KEYWORDS with it's values from PLIST."
+  (if (seq-find (lambda (it) (memq it plist)) keywords)
+      (let ((result))
+        (while plist
+          (let* ((key (pop plist))
+                 (val (pop plist)))
+            (unless (memq key keywords)
+              (push (list key val) result))))
+        (reverse result))
+    plist))
+
+(defvar ivy-fd--ivy-read-keywords
+  '(:predicate :require-match :initial-input
+               :history :preselect
+               :def :keymap :update-fn :sort
+               :unwind :re-builder :matcher
+               :dynamic-collection
+               :extra-props
+               :action :multi-action))
+
+(defvar ivy-fd--configure-keywords
+  '(:parent :initial-input :height :occur
+            :update-fn :init-fn :unwind-fn
+            :index-fn :sort-fn :sort-matches-fn
+            :format-fn :display-fn :display-transformer-fn
+            :alt-done-fn :more-chars :grep-p :exit-codes))
+
+(defun ivy-fd--read-multi (prompt collection &rest ivy-args)
+  "Read COLLECTION with PROMPT and return list with selected candidates.
+IVY-ARGS are combined args both from `ivy-read' and `ivy-configure',
+excluding:
+
+- :action
+- :multi-action
+- :caller
+
+but accepting:
+
+- :persistent-action
+- :premarked
+
+Persistent action will be called with current candidate without exiting
+completion.
+
+Premarked is candidates from COLLECTION which should be initially marked."
+  (interactive)
+  (dolist (alist-sym '(ivy--parents-alist
+                       ivy-initial-inputs-alist
+                       ivy-height-alist
+                       ivy-update-fns-alist
+                       ivy-unwind-fns-alist
+                       ivy-init-fns-alist
+                       ivy-index-functions-alist
+                       ivy-sort-functions-alist
+                       ivy-sort-matches-functions-alist
+                       ivy-format-functions-alist
+                       ivy-display-functions-alist
+                       ivy--display-transformers-alist
+                       ivy-alt-done-functions-alist
+                       ivy-more-chars-alist))
+    (ivy--alist-set alist-sym 'ivy-fd--read-multi nil))
+  (when (and (boundp 'counsel--async-exit-code-plist)
+             (plist-get counsel--async-exit-code-plist
+                        'ivy-fd--read-multi))
+    (setq counsel--async-exit-code-plist
+          (ivy-fd--plist-omit counsel--async-exit-code-plist
+                              '(ivy-fd--read-multi))))
+  (let ((marked)
+        (persistent-action (plist-get ivy-args :persistent-action))
+        (premarked-candidates (plist-get ivy-args :premarked)))
+    (let ((args (append
+                 (list prompt
+                       collection
+                       :caller 'ivy-fd--read-multi
+                       :action (lambda (item)
+                                 (when (and persistent-action
+                                            (null ivy-exit))
+                                   (funcall persistent-action item))
+                                 item)
+                       :multi-action (lambda (children)
+                                       (setq marked children)))
+                 (ivy-fd--plist-pick
+                  (seq-difference ivy-fd--ivy-read-keywords
+                                  '(:multi-action
+                                    :action))
+                  ivy-args)))
+          (configure-args (ivy-fd--plist-pick
+                           ivy-fd--configure-keywords
+                           ivy-args))
+          (item))
+      (when configure-args
+        (push 'ivy-fd--read-multi configure-args)
+        (apply #'ivy-configure configure-args))
+      (setq item (if premarked-candidates
+                     (minibuffer-with-setup-hook
+                         (lambda ()
+                           (when (active-minibuffer-window)
+                             (ivy-fd--mark-candidates premarked-candidates)))
+                       (apply #'ivy-read args))
+                   (apply #'ivy-read args)))
+      (or marked
+          (when item (list item))))))
+
+(defun ivy-fd--read-multiple (prompt collection &rest ivy-args)
+  "Read COLLECTION with PROMPT and return list with selected candidates.
+
+
+- :action
+- :multi-action
+- :caller
+
+but accepting:
+
+- :persistent-action
+- :premarked
+
+Persistent action will be called with current candidate without exiting
+completion.
+
+Premarked is candidates from COLLECTION which should be initially marked."
+  (let ((marked)
+        (persistent-action (plist-get ivy-args :persistent-action))
+        (premarked-candidates (plist-get ivy-args :premarked)))
+    (let ((caller (plist-get ivy-args :caller))
+          (args (append
+                 (list prompt
+                       collection
+                       :action (lambda (item)
+                                 (when (and persistent-action
+                                            (null ivy-exit))
+                                   (funcall persistent-action item))
+                                 item)
+                       :multi-action (lambda (children)
+                                       (setq marked children)))
+                 (ivy-fd--plist-pick
+                  (seq-difference ivy-fd--ivy-read-keywords
+                                  '(:multi-action
+                                    :action))
+                  ivy-args)))
+          (configure-args (ivy-fd--plist-pick
+                           ivy-args
+                           ivy-fd--configure-keywords))
+          (item))
+      (when (and configure-args caller)
+        (push caller configure-args)
+        (apply #'ivy-configure configure-args))
+      (print args)
+      (setq item (if premarked-candidates
+                     (minibuffer-with-setup-hook
+                         (lambda ()
+                           (when (active-minibuffer-window)
+                             (ivy-fd--mark-candidates premarked-candidates)))
+                       (apply #'ivy-read args))
+                   (apply #'ivy-read args)))
+      (or marked
+          (when item (list item))))))
+
 
 (defmacro ivy-fd--pipe (&rest functions)
   "Return left-to-right composition from FUNCTIONS."
@@ -602,6 +788,7 @@ Display remains until next event is input."
 
 (defvar ivy-fd-current-dir nil)
 (defvar ivy-fd-last-input nil)
+(defvar ivy-fd-args nil)
 
 (defvar ivy-fd-hydra-state '(:hidden nil :no-ignore nil))
 
@@ -634,22 +821,6 @@ If value is empty string, return nil."
            (string-to-number value)))
         (t value)))
 
-(defun ivy-fd-increase-depth ()
-  "Increase the search depth by 1 in `ivy-fd'."
-  (let ((depth (or (ivy-fd-maybe-to-number
-                    (ivy-fd-hydra-get :max-depth))
-                   1)))
-    (when (numberp depth)
-      (ivy-fd-hydra-put :max-depth (1+ depth)))))
-
-(defun ivy-fd-decrease-depth ()
-  "Decrease the search depth by one if it's greater than one."
-  (when-let* ((depth (ivy-fd-maybe-to-number
-                     (ivy-fd-hydra-get :max-depth))))
-    (when (and (numberp depth)
-               (> depth 1))
-      (ivy-fd-hydra-put :max-depth
-                        (1- depth)))))
 
 (defun ivy-fd-fdfind-read-max-depth ()
   "Read and set max-depth option."
@@ -658,8 +829,8 @@ If value is empty string, return nil."
                                                   (number-to-string value)))))
     (ivy-fd-hydra-put :max-depth (ivy-fd-maybe-to-number new-value))))
 
-(defun ivy-fd-read-date ()
-  "Read fdfind date options."
+(defun ivy-fd-read-date (&optional prompt &rest _)
+  "Read fdfind date options with PROMPT if provided."
   (let* ((actions '((?h "hours" "%dh")
                     (?m "minutes" "%dmin")
                     (?w "weeks" "%dweeks")
@@ -667,16 +838,17 @@ If value is empty string, return nil."
                     (?t "time")
                     (?o "other")
                     (?n "none")))
-         (answer (read-multiple-choice "Type: " actions)))
+         (answer (read-multiple-choice (or prompt "Date type: ") actions)))
     (if (nth 2 answer)
-        (format (nth 2 answer) (read-number (format "%s " (nth 1 answer))))
+        (format (nth 2 answer)
+                (read-number (format "%s " (nth 1 answer))))
       (pcase (car answer)
         (?t (read-string (format-time-string "%Y-%m-%d %H:%M:%S"
                                              (current-time))))
         (?o (read-string "Value: "))))))
 
-(defun ivy-fd-read-size ()
-  "Read fdfind size options."
+(defun ivy-fd-read-size (&optional prompt &rest _)
+  "Read fdfind size options with PROMPT."
   (let* ((actions '((?b "bytes" "b")
                     (?k "kilobytes" "k")
                     (?m "megabytes" "m")
@@ -686,7 +858,7 @@ If value is empty string, return nil."
                     (?G "gibibytes" "gi")
                     (?T "tebibytes" "ti")
                     (?n "none")))
-         (answer (read-multiple-choice "Type: " actions)))
+         (answer (read-multiple-choice (or prompt "Type: ") actions)))
     (when (nth 2 answer)
       (let* ((value (concat (format "%d"
                                     (read-number (format "%s "
@@ -781,41 +953,14 @@ If value is empty string, return nil."
       (format "--size %s" value)
     ""))
 
-(defun ivy-fd-get-flags ()
-  "Return string with fd flags from `ivy-fd-hydra-state'."
-  (string-join
-   (seq-remove #'string-empty-p
-               (mapcar #'funcall
-                       '(ivy-fd-map-boolean-options
-                         ivy-fd-normalize-type-options
-                         ivy-fd-get-duration-options
-                         ivy-fd-normalize-multi-options
-                         ivy-fd-get-max-depth
-                         ivy-fd-get-size)))
-   "\s"))
+(defun ivy-fd--concat-args (args)
+  "Concatenate ARGS into a single string separated by spaces.
 
-;; (defclass ivy-fd-options ()
-;;   ((no-ignore :initarg :no-ignore
-;;               :initform nil
-;;               :type (or null t)
-;;               :custom boolean
-;;               :documentation "Do not respect .(git|fd)ignore files.")
-;;    (max-depth :initarg :max-depth
-;;               :type number
-;;               :initform 0
-;;               :documentation "Maximum search depth."))
-;;   "A class for fd options.")
+Argument ARGS is a list of strings to be concatenated."
+  (mapconcat
+   (apply-partially #'format "%s")
+   args " "))
 
-;; (cl-defmethod call-fd-options ((km-pers ivy-fd-options) &optional scriptname)
-;;   "Dial the phone for the ivy-fd-options PERS.
-;; Execute the program SCRIPTNAME to dial the phone."
-;;   (message "Dialing the phone for %s in %s"  (slot-value km-pers 'name) (slot-value km-pers 'phone)))
-
-;; (setq km-pers (ivy-fd-options :no-ignore t :max-depth 3))
-;; (setq km-pers-2 (make-instance 'ivy-fd-options :name "Karim" :birthday "Jule" :phone "111-1111"))
-;; (slot-value km-pers :no-ignore)
-;; (call-fd-options km-pers-2)
-;; (call-fd-options km-pers)
 
 (defun ivy-fd-toggle (keyword)
   "Toggle value of KEYWORD."
@@ -838,7 +983,7 @@ If value is empty string, return nil."
           (plist-put plist-a prop-name val)))))
   plist-a)
 
-(defun ivy-fd-plist-pick (keywords pl)
+(defun ivy-fd--plist-pick (keywords pl)
   "Pick KEYWORDS props from PL."
   (let ((result)
         (keyword))
@@ -848,7 +993,7 @@ If value is empty string, return nil."
           (setq result (append result (list keyword value))))))
     result))
 
-(defun ivy-fd-plist-omit-nils (plist)
+(defun ivy-fd--plist-omit-nils (plist)
   "Remove nil values from PLIST, returning a cleaned property list.
 
 Argument PLIST is a property list from which entries with nil values are
@@ -864,18 +1009,7 @@ omitted."
           (setq last (cdr new)))))
     (cdr result)))
 
-(defun ivy-fd-plist-omit (pl &rest keywords)
-  "Return copy of PL winthout properties KEYWORDS."
-  (let ((result))
-    (setq keywords (flatten-list keywords))
-    (dotimes (idx (length pl))
-      (when (eq (logand idx 1) 0)
-        (let ((prop-name (nth idx pl)))
-          (unless (member prop-name keywords)
-            (setq result
-                  (plist-put result prop-name
-                             (plist-get pl prop-name)))))))
-    result))
+
 
 (defun ivy-fd-get-dir-settings (directory)
   "Return settings for DIRECTORY from `ivy-fd-per-directory-settings'."
@@ -890,7 +1024,7 @@ omitted."
         (append (mapcan
                  (lambda (it) (list (intern (concat ":type." (symbol-name it))) t))
                  (ivy-fd--plist-keys type))
-                (ivy-fd-plist-omit settings :type))
+                (ivy-fd--plist-omit settings :type))
       settings)))
 
 (defun ivy-fd-set-directory-settings (directory)
@@ -904,105 +1038,279 @@ omitted."
         (ivy-fd-plist-merge ivy-fd-hydra-state
                             (ivy-fd-get-dir-settings directory))))
 
-(defhydra ivy-fd-hydra-file-types (:color pink)
-  "
---type
 
-_f_ file %(ivy-fd-hydra-get :type.f)
-_d_ directory  %(ivy-fd-hydra-get :type.d)
-_l_ symlink  %(ivy-fd-hydra-get :type.l)
-_x_ executable %(ivy-fd-hydra-get :type.x)
-_e_ empty %(ivy-fd-hydra-get :type.e)
-"
-  ("f" (ivy-fd-toggle-file-type) nil)
-  ("d" (ivy-fd-toggle-dir-type) nil)
-  ("l" (ivy-fd-toggle :type.l) nil)
-  ("x" (ivy-fd-toggle :type.x) nil)
-  ("e" (ivy-fd-toggle :type.e) nil)
-  ("RET" (ivy-fd-async ivy-fd-current-dir ivy-fd-last-input)
-   :exit t)
-  ("q" nil))
 
-(defhydra ivy-fd-hydra (:color pink)
-  "
-fd options:
 
-_h_ --hidden         %(ivy-fd-hydra-get :hidden) search hidden
-_I_ --no-ignore      %(ivy-fd-hydra-get :no-ignore) ignore .git|fdignores
-_n_ --no-ignore-vcs  %(ivy-fd-hydra-get :no-ignore-vcs) ignore .gitignore
-_C_ --case-sensitive %(ivy-fd-hydra-get :case-sensitive) (default: smart case)
-_i_ --ignore-case    %(ivy-fd-hydra-get :ignore-case) (default: smart case)
-_g_ --glob           %(ivy-fd-hydra-get :glob)
-_F_ --fixed-strings  %(ivy-fd-hydra-get :fixed-strings) as a literal string
-_a_ --absolute-path  %(ivy-fd-hydra-get :absolute-path)  absolute paths
-_L_ --follow         %(ivy-fd-hydra-get :follow)  follow symbolic links
-_p_ --full-path      %(ivy-fd-hydra-get :full-path) search full path
+(defun ivy-fd--stringify (item)
+  "Convert various data types to string representation.
 
-   Depth
+Argument ITEM is the object to be stringified; it can be a string, number,
+vector, list, cons cell, symbol, or any other type."
+  (pcase item
+    ((pred not)
+     item)
+    ((pred stringp)
+     (substring-no-properties item))
+    ((pred numberp)
+     (number-to-string item))
+    ((pred vectorp)
+     (apply #'vector (mapcar #'ivy-fd--stringify (append item nil))))
+    ((pred proper-list-p)
+     (mapcar #'ivy-fd--stringify item))
+    ((guard (and (consp item)
+                 (atom (cdr item))))
+     (cons (ivy-fd--stringify (car item))
+           (ivy-fd--stringify (cdr item))))
+    ((guard (and item (symbolp item)))
+     (substring-no-properties (symbol-name item)))
+    (_ item)))
 
-_m_ --max-depth %(ivy-fd-hydra-get :max-depth)
-_<up>_ increase
-_<down>_ decrease
+(defun ivy-fd--transient-args ()
+  "Retrieve and process arguments for transient command."
+  (let ((raw-args))
+    (cond (transient-current-command
+           (setq raw-args (transient-args transient-current-command)))
+          (transient--prefix
+           (setq transient-current-prefix transient--prefix)
+           (setq transient-current-command (oref transient--prefix command))
+           (setq transient-current-suffixes transient--suffixes)
+           (setq raw-args (transient-args transient-current-command))))
+    (ivy-fd--stringify raw-args)))
 
---type
 
-_f_ file %(ivy-fd-hydra-get :type.f)
-_d_ directory  %(ivy-fd-hydra-get :type.d)
-_l_ symlink  %(ivy-fd-hydra-get :type.l)
-_x_ executable %(ivy-fd-hydra-get :type.x)
-_e_ empty %(ivy-fd-hydra-get :type.e)
 
-_._ --extension %(ivy-fd-hydra-get :extension)
-_s_ --size  %(ivy-fd-hydra-get :size)
-_E_ --exclude %(ivy-fd-hydra-get :exclude) <pattern>
+(transient-define-suffix ivy-fd-show-args ()
+  "Display formatted npm command with arguments."
+  :transient t
+  :description "Show arguments"
+  (interactive)
+  (let ((args
+         (ivy-fd--transient-args)))
+    (message "fdfind %s"
+             args)))
 
-By file modification
+(transient-define-suffix ivy-fd-vterm ()
+  "Execute fdfind with transient arguments."
+  :transient t
+  :description (lambda ()
+                 (let* ((args
+                         (ivy-fd--transient-args))
+                        (cmd (concat ivy-fd-exec-path " "
+                                     (mapconcat (apply-partially
+                                                 #'format "%s")
+                                                args " "))))
+                   cmd))
+  (interactive)
+  (require 'vterm nil t)
+  (let* ((args
+          (ivy-fd--transient-args))
+         (cmd (concat ivy-fd-exec-path " "
+                      (mapconcat
+                       (apply-partially #'format "%s")
+                       args " ")))
+         (buffer (format "*%s*"
+                         (string-join
+                          (delete nil
+                                  (list "vterm"
+                                        (car
+                                         (split-string cmd nil t))
+                                        (or (vc-root-dir)
+                                            default-directory)))
+                          "-")))
+         (live-p (buffer-live-p (get-buffer buffer))))
+    (when live-p
+      (switch-to-buffer (get-buffer buffer))
+      (when (fboundp 'vterm--invalidate)
+        (vterm--invalidate))
+      (kill-buffer (get-buffer buffer)))
+    (let ((default-directory (or (vc-root-dir) default-directory)))
+      (when (fboundp 'vterm)
+        (vterm buffer)))
+    (when (fboundp 'vterm-send-string)
+      (run-at-time
+       0.5 nil #'vterm-send-string cmd))))
 
-_w_ within %(ivy-fd-hydra-get :changed-within)
-_b_ before %(ivy-fd-hydra-get :changed-before)
+(transient-define-suffix ivy-fd-run ()
+  "Execute fdfind."
+  :transient t
+  :description "Read"
+  (interactive)
+  (let* ((args
+          (ivy-fd--transient-args))
+         (dir (or (ivy-fd--get-arg "--base-directory=" args)
+                  default-directory)))
+    (ivy-fd-async dir ivy-fd-last-input
+                  (ivy-fd--remove-arg "--base-directory="
+                                      args))))
 
-Settings
 
-_RET_ done
-_D_ change directory %`ivy-fd-current-dir
-_r_ apply directory settings
-_z_ merge with directory settings
-"
-  ("h" (ivy-fd-toggle :hidden) nil)
-  ("I" (ivy-fd-toggle :no-ignore) nil)
-  ("n" (ivy-fd-toggle :no-ignore-vcs) nil)
-  ("C" (ivy-fd-toggle :case-sensitive) nil)
-  ("i" (ivy-fd-toggle :ignore-case) nil)
-  ("g" (ivy-fd-toggle :glob) nil)
-  ("F" (ivy-fd-toggle :fixed-strings) nil)
-  ("a" (ivy-fd-toggle :absolute-path) nil)
-  ("L" (ivy-fd-toggle :follow) nil)
-  ("p" (ivy-fd-toggle :full-path) nil)
-  ("m" (ivy-fd-fdfind-read-max-depth) nil)
-  ("<up>" (ivy-fd-increase-depth) nil)
-  ("<down>" (ivy-fd-decrease-depth) nil)
-  ("f" (ivy-fd-toggle-file-type) nil)
-  ("d" (ivy-fd-toggle-dir-type) nil)
-  ("l" (ivy-fd-toggle :type.l) nil)
-  ("x" (ivy-fd-toggle :type.x) nil)
-  ("e" (ivy-fd-toggle :type.e) nil)
-  ("." (ivy-fd-read-multy-options :extension) nil)
-  ("s" (ivy-fd-hydra-put :size (ivy-fd-read-size)) nil)
-  ("E" (ivy-fd-read-multy-options :exclude) nil)
-  ("w" (ivy-fd-hydra-put :changed-within (ivy-fd-read-date)) nil)
-  ("b" (ivy-fd-hydra-put :changed-before (ivy-fd-read-date)) nil)
-  ("RET" (ivy-fd-async ivy-fd-current-dir ivy-fd-last-input) :exit t)
-  ("D" (setq ivy-fd-current-dir (read-directory-name
-                                 "Directory: "
-                                 (or ivy-fd-current-dir default-directory)))
-   nil)
-  ("r" (ivy-fd-set-directory-settings
-        (or ivy-fd-current-dir default-directory))
-   nil)
-  ("z" (ivy-fd-merge-directory-settings
-        (or ivy-fd-current-dir default-directory))
-   nil)
-  ("q" nil))
+
+
+(defvar ivy-fd--file-type-descriptions
+  '(("file" . "Regular files")
+    ("directory" . "Directories")
+    ("symlink" . "Symbolic links")
+    ("socket" . "Socket")
+    ("pipe" . "Named pipe (FIFO)")
+    ("executable" . "Executables")
+    ("empty" . "Empty files or directories")))
+
+(defun ivy-fd--file-type-reader (&optional prompt initial-input history)
+  "Read a file type with completion, using optional PROMPT and INITIAL-INPUT.
+
+Optional argument PROMPT is a string used to prompt the user for input,
+defaulting to \"File type: \".
+
+Optional argument INITIAL-INPUT is the initial input in the minibuffer,
+defaulting to nil.
+
+Optional argument HISTORY is the history list to use for the input,
+defaulting to nil."
+  (let* ((alist ivy-fd--file-type-descriptions)
+         (longest
+          (propertize " " 'display
+                      (list 'space :align-to
+                            (apply #'max
+                                   (or
+                                    (mapcar
+                                     (pcase-lambda (`(,k . ,_v))
+                                       (length k))
+                                     alist)
+                                    (list 10))))))
+         (annotf (lambda (file-type)
+                   (concat
+                    longest
+                    (substring-no-properties
+                     (cdr
+                      (assoc-string
+                       (if
+                           (and ivy-mark-prefix
+                                (string-prefix-p
+                                 ivy-mark-prefix
+                                 file-type))
+                           (substring-no-properties
+                            file-type
+                            (length
+                             ivy-mark-prefix))
+                         file-type)
+                       ivy-fd--file-type-descriptions))))))
+         (strs (mapcar #'car alist)))
+    (ivy-fd--read-multiple (or prompt
+                               "File type: ")
+                           (lambda (str pred action)
+                             (if (eq action 'metadata)
+                                 `(metadata
+                                   (annotation-function . ,annotf))
+                               (complete-with-action action strs str pred)))
+                           :initial-input initial-input
+                           :history history)))
+
+
+(defun ivy-fd--read-dir (&optional prompt initial-input &rest _)
+  "Read a directory name with optional PROMPT and INITIAL-INPUT.
+
+Optional argument PROMPT is a string used to prompt the user.
+
+Optional argument INITIAL-INPUT is the initial input in the minibuffer.
+
+Remaining arguments _ are ignored and not used in the function."
+  (read-directory-name prompt nil nil t initial-input))
+
+(defun ivy-fd--get-arg (arg args)
+  "Extract and return substring from ARGS starting with ARG.
+
+Argument ARG is a string used to match the prefix of elements in ARGS.
+
+Arguments ARGS is a list of strings to search through for a match with ARG."
+  (when-let* ((value (seq-find (lambda (it)
+                                 (and it
+                                      (stringp it)
+                                      (string-prefix-p arg it)))
+                               args)))
+    (substring-no-properties value
+                             (length arg))))
+
+(defun ivy-fd--remove-arg (arg args)
+  "Return updated ARGS list with elements prefixed by ARG removed.
+
+Argument ARG is a string used as a prefix to identify elements to remove.
+
+Arguments ARGS is a list of strings from which elements prefixed by ARG are
+removed."
+  (seq-remove (lambda (it)
+                (and it
+                     (stringp it)
+                     (string-prefix-p arg it)))
+              args))
+
+;;;###autoload (autoload 'ivy-fd-menu "ivy-fd" nil t)
+(transient-define-prefix ivy-fd-menu ()
+  "Menu for fdfind."
+  :man-page ivy-fd-exec-path
+  :value
+  (lambda ()
+    (append
+     (remove nil ivy-fd-args)
+     (list "--base-directory=" (or ivy-fd-current-dir default-directory))))
+  ["FLAGS:"
+   ("-H" "Search hidden files and directories" ("-H" "--hidden"))
+   ("-I" "Do not respect .(git|fd)ignore files" ("-I" "--no-ignore"))
+   ("-s" "A case-sensitive search" ("-s" "--case-sensitive"))
+   ("-i" "A case-insensitive search" ("-i" "--ignore-case"))
+   ("-g" "Glob-based search (default: regular expression)" ("-g" "--glob"))
+   ("-a" "Show absolute instead of relative paths" ("-a" "--absolute-path"))
+   ("-l" "Show absolute instead of relative paths" ("-l" "--list-details"))
+   ("-L" "Follow symbolic links" ("-L" "--follow"))
+   ("-p" "Search full abs. path" ("-p" "--full-path"))
+   ("-F"
+    "Treat the pattern as a literal string instead of a regular expression"
+    "--fixed-strings")]
+  ["OPTIONS:"
+   ("-d" "Maximum search depth" ("-d=" "--max-depth=")
+    :class transient-option
+    :reader transient-read-number-N+)
+   ("-D" "Minimum search depth" "--min-depth="
+    :class transient-option
+    :reader transient-read-number-N+)
+   ("-t" "Filter by type" ("-t=" "--type=")
+    :class transient-option
+    :multi-value repeat
+    :reader ivy-fd--file-type-reader)
+   ("-e" "Filter by file extension" "-e="
+    :class transient-option
+    :multi-value repeat)
+   ""
+   ("-E" "Exclude entries that match the given glob pattern"
+    ("-E=" "--exclude="
+     :multi-value repeat)
+    :class transient-option)
+   ("-S" "Limit results based on the size of files" ("-S=" "--size=")
+    :class transient-option
+    :reader ivy-fd-read-size)
+   ("n" "Newer then" "--changed-within="
+    :class transient-option
+    :reader ivy-fd-read-date)
+   ("o" "Older then" "--changed-before="
+    :class transient-option
+    :reader ivy-fd-read-date)
+   ("-o" "Filter by owning user and/or group" ("-o=" "--owner=") :class
+    transient-option)
+   ("c" "Limit the number of search results to 'count' and quit immediately."
+    "--max-results="
+    :class transient-option
+    :reader transient-read-number-N+)
+   ("d" "Directory" "--base-directory="
+    :class transient-option
+    :reader ivy-fd--read-dir)]
+  [["Actions"
+    ("-x" "Execute a command for each search result" ("-x=" "--exec=") :class
+     transient-option)
+    ("-X" "Execute a command with all search results at once" ("-X="
+                                                               "--exec-batch=")
+     :class transient-option)
+    ("C-c C-a" ivy-fd-show-args)
+    ("C-c v" ivy-fd-vterm)
+    ("RET" ivy-fd-run)]])
 
 ;;;###autoload
 (defun ivy-fd-read-flags ()
@@ -1011,8 +1319,8 @@ _z_ merge with directory settings
   (if (active-minibuffer-window)
       (progn
         (setq ivy-fd-last-input ivy-text)
-        (ivy-quit-and-run (ivy-fd-hydra/body)))
-    (ivy-fd-hydra/body)))
+        (ivy-quit-and-run (ivy-fd-menu)))
+    (ivy-fd-menu)))
 
 ;;;###autoload
 (defun ivy-fd-find-directory-up ()
@@ -1023,7 +1331,8 @@ _z_ merge with directory settings
              (ivy-quit-and-run
                (funcall-interactively #'ivy-fd-async
                                       (ivy-fd-parent-dir ivy-fd-current-dir)
-                                      ivy-fd-last-input)))
+                                      ivy-fd-last-input
+                                      ivy-fd-args)))
     (funcall-interactively #'ivy-fd-async
                            (ivy-fd-parent-dir default-directory))))
 
@@ -1106,9 +1415,12 @@ If FILENAME is absolute just return it."
       (funcall-interactively #'ivy-fd-async
                              directory))))
 
-(defun ivy-fd-make-shell-command ()
-  "Return string fd shell command."
-  (concat ivy-fd-exec-path " -0 --color=never " (ivy-fd-get-flags)
+(defun ivy-fd--make-shell-command (args)
+  "Concatenate shell command string using ARGS and `ivy-fd-exec-path'.
+
+Argument ARGS is a list of strings to be concatenated into a single string
+separated by spaces."
+  (concat ivy-fd-exec-path " -0 --color=never " (ivy-fd--concat-args args)
           (concat " %s . ")))
 
 ;;;###autoload
@@ -1150,34 +1462,10 @@ If FILENAME is absolute just return it."
     (define-key map (kbd "C-c C-o") #'ivy-fd-find-file-other-window)
     (define-key map (kbd "M-.") #'ivy-fd-toggle-hidden)
     (define-key map (kbd "M-<up>") #'ivy-fd-change-max-depth)
-    (define-key map (kbd "C-c C-f") #'ivy-fd-hydra-file-types/body)
     (define-key map (kbd "C-c C-i") #'ivy-fd-insert-filename)
     (define-key map (kbd "M-w") #'ivy-fd-copy-filename)
     map))
 
-(defvar ivy-fd-sync-command nil)
-
-;;;###autoload
-(defun ivy-fd-sync (&optional initial-input)
-  "Call a \"locate\" style shell command.
-INITIAL-INPUT can be given as the initial minibuffer input."
-  (interactive)
-  (unless ivy-fd-current-dir
-    (setq ivy-fd-current-dir default-directory))
-  (setq ivy-fd-sync-command (concat "fdfind --color=never "
-                                    (ivy-fd-get-flags)
-                                    " . "
-                                    (abbreviate-file-name
-                                     ivy-fd-current-dir)))
-  (ivy-read ivy-fd-sync-command (split-string
-                                 (shell-command-to-string
-                                  ivy-fd-sync-command)
-                                 "\n")
-            :initial-input initial-input
-            :history 'ivy-fd-async-history
-            :keymap ivy-fd-map
-            :action 'ivy-fd-find-file-or-preview
-            :caller 'ivy-fd-sync))
 
 (defun ivy-fd-resolve-project-root ()
   "Resolve project root by searching git directory."
@@ -1219,6 +1507,23 @@ Optional argument INITIAL-INPUT is the initial input for the search."
     (setq ivy-fd-hydra-state (ivy-fd-get-dir-settings dir))
     (ivy-fd-async dir)))
 
+(defun ivy-fd--prompt (dir args)
+  "Return a truncated prompt string with directory and formatted flags.
+
+Argument DIR is a directory path used as a base for the prompt.
+
+Argument ARGS is a list of strings representing command-line flags."
+  (truncate-string-to-width
+   (concat
+    (when dir (abbreviate-file-name (or dir default-directory)))
+    ": "
+    (let ((flags (string-trim (ivy-fd--concat-args args))))
+      (if (string-empty-p flags)
+          ""
+        (concat flags " "))))
+   (window-width)
+   nil nil t))
+
 
 ;;;###autoload
 (defun ivy-fd-async (&optional directory initial-input args)
@@ -1227,20 +1532,16 @@ Optional argument INITIAL-INPUT is the initial input for the search."
   (setq ivy-fd-current-dir (ivy-fd-slash
                             (expand-file-name
                              (or directory default-directory))))
-  (setq ivy-fd-hydra-state (or args
-                               (ivy-fd-get-dir-settings
-                                ivy-fd-current-dir)
-                               ivy-fd-hydra-state))
-  (setq ivy-fd-async-command (ivy-fd-make-shell-command))
+  (setq ivy-fd-args (or args
+                        (ivy-fd-get-dir-settings
+                         ivy-fd-current-dir)
+                        ivy-fd-args))
+  (setq ivy-fd-async-command (ivy-fd--make-shell-command
+                              ivy-fd-args))
   (unwind-protect
       (let ((default-directory ivy-fd-current-dir))
-        (ivy-read (concat
-                   (abbreviate-file-name ivy-fd-current-dir)
-                   ": "
-                   (let ((flags (string-trim (ivy-fd-get-flags))))
-                     (if (string-empty-p flags)
-                         ""
-                       (concat flags " "))))
+        (ivy-read (ivy-fd--prompt (or ivy-fd-current-dir default-directory)
+                                  ivy-fd-args)
                   #'ivy-fd-async-function
                   :initial-input initial-input
                   :dynamic-collection t
@@ -1250,45 +1551,48 @@ Optional argument INITIAL-INPUT is the initial input for the search."
                   :caller 'ivy-fd-async))
     (ivy-fd-delete-process)))
 
-;;;###autoload
-(defun ivy-fd-async-read-directory (&optional directory initial-input args)
-  "Search files asynchronously in a DIRECTORY with `fd' and Ivy.
+;; ;;;###autoload
+;; (defun ivy-fd-async-read-directory (&optional directory initial-input args)
+;;   "Search files asynchronously in a DIRECTORY with `fd' and Ivy.
 
-Optional argument DIRECTORY is the directory to read from. It defaults to
-`default-directory'.
+;; Optional argument DIRECTORY is the directory to read from. It defaults to
+;; `default-directory'.
 
-Optional argument INITIAL-INPUT is the initial input for the search. It defaults
-to nil.
+;; Optional argument INITIAL-INPUT is the initial input for the search. It defaults
+;; to nil.
 
-Optional argument ARGS is additional arguments for the search. It defaults to
-nil."
-  (interactive)
-  (setq ivy-fd-current-dir (ivy-fd-slash
-                            (expand-file-name
-                             (or directory default-directory))))
-  (ivy-fd-hydra-put :type.d t)
-  (ivy-fd-hydra-put :type.f nil)
-  (unless directory
-    (setq ivy-fd-hydra-state (or args
-                                 (ivy-fd-get-dir-settings ivy-fd-current-dir))))
-  (setq ivy-fd-async-command (ivy-fd-make-shell-command))
-  (unwind-protect
-      (let ((default-directory ivy-fd-current-dir))
-        (ivy-read (concat
-                   (abbreviate-file-name ivy-fd-current-dir)
-                   ": "
-                   (let ((flags (string-trim (ivy-fd-get-flags))))
-                     (if (string-empty-p flags)
-                         ""
-                       (concat flags " "))))
-                  #'ivy-fd-async-function
-                  :initial-input initial-input
-                  :dynamic-collection t
-                  :history 'ivy-fd-async-history
-                  :keymap ivy-fd-map
-                  :action 'ivy-fd-find-file-or-preview
-                  :caller 'ivy-fd-async))
-    (ivy-fd-delete-process)))
+;; Optional argument ARGS is additional arguments for the search. It defaults to
+;; nil."
+;;   (interactive)
+;;   (setq ivy-fd-current-dir (ivy-fd-slash
+;;                             (expand-file-name
+;;                              (or directory default-directory))))
+;;   (ivy-fd-hydra-put :type.d t)
+;;   (ivy-fd-hydra-put :type.f nil)
+;;   (unless directory
+;;     (setq ivy-fd-hydra-state (or args
+;;                                  (ivy-fd-get-dir-settings ivy-fd-current-dir))))
+;;   (setq ivy-fd-async-command (ivy-fd--make-shell-command ivy-fd-args))
+;;   (unwind-protect
+;;       (let ((default-directory ivy-fd-current-dir)
+;;             (prompt (truncate-string-to-width
+;;                      (concat
+;;                       (abbreviate-file-name ivy-fd-current-dir)
+;;                       ": "
+;;                       (let ((flags (string-trim (ivy-fd--concat-args ))))
+;;                         (if (string-empty-p flags)
+;;                             ""
+;;                           (concat flags " "))))
+;;                      (window-width))))
+;;         (ivy-read prompt
+;;                   #'ivy-fd-async-function
+;;                   :initial-input initial-input
+;;                   :dynamic-collection t
+;;                   :history 'ivy-fd-async-history
+;;                   :keymap ivy-fd-map
+;;                   :action 'ivy-fd-find-file-or-preview
+;;                   :caller 'ivy-fd-async))
+;;     (ivy-fd-delete-process)))
 
 (defun ivy-fd-format-time-readable (time)
   "Calculate and format the time difference from the current TIME.
