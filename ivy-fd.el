@@ -34,13 +34,6 @@
 (require 'ivy)
 (require 'transient)
 
-
-(defcustom ivy-fd-multi-command-flags '("--changed-within 1d"
-                                        "--changed-before 1d")
-  "Flags to pass on every search."
-  :type '(repeat string)
-  :group 'ivy-fd)
-
 (defcustom ivy-fd-exec-path (or (executable-find "fdfind")
                                 (executable-find "fd"))
   "Path to fd program."
@@ -268,36 +261,6 @@ Premarked is candidates from COLLECTION which should be initially marked."
   (declare (debug t) (pure t) (side-effect-free t))
   `(ivy-fd--pipe ,@(reverse functions)))
 
-(defmacro ivy-fd--or (&rest functions)
-  "Return an unary function which invoke FUNCTIONS until first non-nil result."
-  (declare (debug t) (pure t) (side-effect-free t))
-  `(lambda (it) (or
-                 ,@(mapcar (lambda (v) (if (symbolp v)
-                                           `(,v it)
-                                         `(funcall ,v it)))
-                           functions))))
-
-(defmacro ivy-fd--and (&rest functions)
-  "Return an unary function which invoke FUNCTIONS until first nil result."
-  (declare (debug t) (pure t) (side-effect-free t))
-  `(lambda (it) (and
-            ,@(mapcar (lambda (v) (if (symbolp v)
-                                 `(,v it)
-                               `(funcall ,v it)))
-                      functions))))
-
-(defmacro ivy-fd--partial (fn &rest args)
-  "Return a partial application of FN to left-hand ARGS.
-
-ARGS is a list of the last N arguments to pass to FN. The result is a new
-function which does the same as FN, except that the last N arguments are fixed
-at the values with which this function was called."
-  (declare (side-effect-free t))
-  `(lambda (&rest pre-args)
-     ,(car (list (if (symbolp fn)
-                     `(apply #',fn (append (list ,@args) pre-args))
-                   `(apply ,fn (append (list ,@args) pre-args)))))))
-
 (defmacro ivy-fd--rpartial (fn &rest args)
   "Return a partial application of FN to right-hand ARGS.
 
@@ -348,21 +311,6 @@ at the values with which this function was called."
           :key-type (directory :tag "Directory")
           :value-type ,ivy-fd-settings-type))
 
-(defcustom ivy-fd-settings-type-switchers nil
-  "Dynamic settings."
-  :group 'ivy-fd
-  :type `(alist
-          :key-type (directory :tag "Name")
-          :value-type (repeat ,ivy-fd-settings-type)))
-
-(defcustom ivy-fd-root-flags  '("-E 'run'"
-                                   "-E" "'jest_rs'"
-                                   "-E" "'home'"
-                                   "--follow")
-  "Flags to pass fdind when searching in root directory."
-  :type '(repeat string)
-  :group 'ivy-fd)
-
 (defun ivy-fd-parent (path)
   "Return the parent directory to PATH without slash."
   (let ((parent (file-name-directory
@@ -390,129 +338,6 @@ at the values with which this function was called."
   "Return the parent directory to PATH with slash."
   (when-let* ((path (ivy-fd-parent path)))
     (ivy-fd-slash path)))
-
-(defun ivy-fd-generic-list-to-string (&rest flags)
-  "Flattenize and join FLAGS using spaces."
-  (setq flags (delete nil (flatten-list flags)))
-  (when flags
-    (string-join flags "\s")))
-
-(defun ivy-fd-map-ignored (ignored)
-  "Generate fd flag to exclude IGNORED from search."
-  (let ((re "^\\(-E\\|--exclude\\)"))
-    (if (stringp ignored)
-        (if (string-match-p re ignored)
-            ignored
-          (concat "-E " ignored))
-      (if (and ignored (listp ignored))
-          (ivy-fd-generic-list-to-string
-           (mapcar (lambda (it) (if (and (stringp it)
-                                    (not (string-match-p re it)))
-                               (concat "-E " it)
-                             it))
-                   ignored))))))
-
-(defun ivy-fd-make-sortable-pre-part (&optional dir flags ignores)
-  "Return string with fdfind command to search in DIR.
-
-FLAGS and IGNORES should be string or list or alist.
-
-IGNORES may omit --exclude flag."
-  (setq flags (ivy-fd-generic-list-to-string flags))
-  (setq ignores (ivy-fd-generic-list-to-string
-                 (ivy-fd-map-ignored ignores)))
-  (let* ((dir-flag (when dir (ivy-fd-generic-list-to-string "." dir)))
-         (parts (mapcar
-                 (ivy-fd--compose
-                  (ivy-fd--rpartial concat ";")
-                  'ivy-fd-generic-list-to-string
-                  (apply-partially #'append '("fdfind" "-0" "--color=never"))
-                  (ivy-fd--rpartial append (list ignores flags dir-flag))
-                  'list)
-                 (if (equal dir "/")
-                     (list (ivy-fd-generic-list-to-string
-                            ivy-fd-root-flags))
-                   ivy-fd-multi-command-flags))))
-    (ivy-fd-generic-list-to-string parts)))
-
-;;;###autoload
-(defun ivy-fd-make-sortable-command (place &optional common-flags ignores)
-  "Return string with fdfind command to search in PLACE.
-PLACE can be a string of directory, list of directories,or alist of directories
-with extra flags.
-
-COMMON-FLAGS and IGNORES should be string or list or alist.
-
-IGNORES may omit --exclude flag."
-  (if (stringp place)
-      (ivy-fd-make-sortable-pre-part place common-flags ignores)
-    (mapconcat (lambda (it)
-                 (if (stringp it)
-                     (ivy-fd-make-sortable-pre-part
-                      it
-                      common-flags
-                      ignores)
-                   (let ((dir (car it))
-                         (flags (cdr it)))
-                     (ivy-fd-make-sortable-pre-part
-                      dir
-                      (append (if (listp flags)
-                                  flags
-                                (list flags))
-                              common-flags)
-                      ignores))))
-               place
-               "\s")))
-
-;;;###autoload
-(defun ivy-fd-make-sortable-tr-command (place &optional common-flags ignores)
-  "Return combined `fdfind' and `tr' command to search in PLACE.
-
-PLACE can be a string of directory, list of directories,or alist of directories
- with extra flags.
-
-COMMON-FLAGS and IGNORES should be string or list or alist.
-IGNORES may omit --exclude flag."
-  (let ((command (ivy-fd-make-sortable-command place common-flags ignores)))
-    (string-join (list "{" command "}" "|"  "tr '\n' ' '") "\s")))
-
-;;;###autoload
-(defun ivy-fd-multi-dir (place &optional flags ignored)
-  "Search multiple directories using `fdfind' and format output.
-
-Argument PLACE is a string of directory, list of directories, or alist of
-directories with extra flags.
-
-Optional argument FLAGS is a string, list, or alist specifying additional flags
-for the search command.
-
-Optional argument IGNORED is a string, list, or alist specifying patterns to
-ignore, which may omit the --exclude flag."
-  (split-string (shell-command-to-string
-                 (ivy-fd-make-sortable-tr-command place flags ignored))
-                "\0" t))
-
-(defun ivy-fd-make-command (&optional dir flags)
-  "Generate string with fd command in DIR from FLAGS."
-  (ivy-fd-generic-list-to-string
-   "fdfind" "--color=never"
-   flags
-   (ivy-fd-generic-list-to-string "." dir)))
-
-(defun ivy-fd-find (place &optional flags ignored)
-  "Search files using `fdfind' and format output for Ivy completion.
-
-Argument PLACE is a string representing the directory to search in, a list of
-directories, or an alist of directories with extra flags.
-
-Optional argument FLAGS is a string, list, or alist specifying additional flags
-for the search command.
-
-Optional argument IGNORED is a string, list, or alist specifying patterns to
-ignore, which may omit the --exclude flag."
-  (split-string (shell-command-to-string
-                 (ivy-fd-make-sortable-tr-command place flags ignored))
-                "\0" t))
 
 (defvar ivy-fd-async-command nil)
 
@@ -546,9 +371,6 @@ character in s is index 1."
 (defvar ivy-fd--async-time nil
   "Store the time when a new process was started.
 Or the time of the last minibuffer update.")
-
-(defvar ivy-fd-async-split-string-re-alist '((t . "[\r\n]"))
-  "Store the regexp for splitting shell command output.")
 
 (defvar ivy-fd--async-exit-code-plist ()
   "Associate commands with their exit code descriptions.
@@ -796,16 +618,6 @@ Display remains until next event is input."
   "Get value of KEYWORD from `fd-hydra-state'."
   (plist-get ivy-fd-hydra-state keyword))
 
-(defun ivy-fd-hydra-get-non-empty (keyword)
-  "Return non-empty string value for KEYWORD from `ivy-fd-hydra-state' if exists.
-
-Argument KEYWORD is a symbol used to retrieve a value from `ivy-fd-hydra-state'
-plist."
-  (when-let* ((value (plist-get ivy-fd-hydra-state keyword)))
-    (when (and (stringp value)
-               (not (string-empty-p value)))
-      value)))
-
 (defun ivy-fd-hydra-put (keyword value)
   "Put KEYWORD with VALUE to `fd-hydra-state'."
   (setq ivy-fd-hydra-state
@@ -871,88 +683,6 @@ If value is empty string, return nil."
                                (?e ,(format "equal then %s" value) ""))))))
         (concat prefix value)))))
 
-(defvar ivy-fd-multi-options '(:exclude :extension))
-(defun ivy-fd-read-multy-options (keyword)
-  "Read multiple options for KEYWORD."
-  (let* ((name (ivy-fd-keyword-to-option keyword))
-         (extensions
-          (split-string
-           (string-trim (read-string
-                         (format "%s (empty to unset) " name)
-                         (string-join (ivy-fd-hydra-get keyword) "\s")))
-           "\s" t)))
-    (ivy-fd-hydra-put keyword extensions)))
-
-(defun ivy-fd-normalize-multi-option (keyword)
-  "Return string with KEYWORD option."
-  (when-let* ((value (ivy-fd-hydra-get keyword)))
-    (mapconcat
-     (lambda (v) (concat
-             (ivy-fd-keyword-to-option
-              keyword)
-             " " v))
-     value "\s")))
-
-(defun ivy-fd-normalize-multi-options ()
-  "Return options for exclude and extensions."
-  (string-join (mapcar #'ivy-fd-normalize-multi-option
-                       ivy-fd-multi-options)
-               "\s"))
-
-(defun ivy-fd-toggle-file-type ()
-  "Toggle file and directory flags."
-  (let ((value (not (ivy-fd-hydra-get :type.f))))
-    (ivy-fd-hydra-put :type.f value)
-    (ivy-fd-hydra-put :type.d (when value nil))))
-
-(defun ivy-fd-normalize-type-options ()
-  "Return string with --type options."
-  (let ((types (mapcar
-                (lambda (k) (when-let* ((value (ivy-fd-hydra-get
-                                          (intern (concat ":type." k)))))
-                         (concat "--type " k)))
-                '("f" "d" "l" "e" "x"))))
-    (string-join (delq nil types) "\s")))
-
-(defun ivy-fd-map-boolean-options ()
-  "Return string with active flags from `ivy-fd-boolean-options'."
-  (string-join
-   (mapcar
-    #'ivy-fd-keyword-to-option
-    (seq-filter (apply-partially #'ivy-fd-hydra-get)
-                ivy-fd-boolean-options))
-   "\s"))
-
-(defun ivy-fd-toggle-dir-type ()
-  "Toggle directory and file flags."
-  (let ((value (not (ivy-fd-hydra-get :type.d))))
-    (ivy-fd-hydra-put :type.d value)
-    (ivy-fd-hydra-put :type.f (when value nil))))
-
-(defun ivy-fd-get-duration-options ()
-  "Return string with changed-within and changed-before options."
-  (seq-reduce
-   (lambda (acc key) (if-let* ((value (ivy-fd-hydra-get-non-empty key)))
-                    (concat acc " "
-                            (ivy-fd-keyword-to-option key)
-                            " " value)
-                  acc))
-   '(:changed-within :changed-before) ""))
-
-(defun ivy-fd-get-max-depth ()
-  "Get string with max-depth option and value or empty string."
-  (or
-   (when-let* ((value (ivy-fd-maybe-to-number
-                      (ivy-fd-hydra-get :max-depth))))
-     (when (> value 0) (format "--max-depth %d" value)))
-   ""))
-
-(defun ivy-fd-get-size ()
-  "Get string with size option and value or empty string."
-  (if-let* ((value (ivy-fd-hydra-get-non-empty :size)))
-      (format "--size %s" value)
-    ""))
-
 (defun ivy-fd--concat-args (args)
   "Concatenate ARGS into a single string separated by spaces.
 
@@ -992,24 +722,6 @@ Argument ARGS is a list of strings to be concatenated."
         (unless (null value)
           (setq result (append result (list keyword value))))))
     result))
-
-(defun ivy-fd--plist-omit-nils (plist)
-  "Remove nil values from PLIST, returning a cleaned property list.
-
-Argument PLIST is a property list from which entries with nil values are
-omitted."
-  (let* ((result (list 'head))
-         (last result))
-    (while plist
-      (let* ((key (pop plist))
-             (val (pop plist))
-             (new (and val (list key val))))
-        (when new
-          (setcdr last new)
-          (setq last (cdr new)))))
-    (cdr result)))
-
-
 
 (defun ivy-fd-get-dir-settings (directory)
   "Return settings for DIRECTORY from `ivy-fd-per-directory-settings'."
@@ -1099,7 +811,8 @@ vector, list, cons cell, symbol, or any other type."
                                      (mapconcat (apply-partially
                                                  #'format "%s")
                                                 args " "))))
-                   cmd))
+                   (concat "Run in vterm: " (propertize cmd 'face
+                                                        'transient-value))))
   (interactive)
   (require 'vterm nil t)
   (let* ((args
