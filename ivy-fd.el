@@ -352,7 +352,7 @@ character in s is index 1."
       (goto-char (point-min))
       (count-matches re (or start 1) (or end (point-max))))))
 
-(defcustom ivy-fd-async-filter-update-time 500000
+(defcustom ivy-fd-async-filter-update-time 100000
   "The amount of microseconds to wait until updating `ivy-fd--async-filter'."
   :type 'integer
   :group 'ivy-fd)
